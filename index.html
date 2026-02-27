@@ -3,6 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="referrer" content="no-referrer">
 <title>🎬 华语演员库</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
@@ -596,7 +597,7 @@ const PhotoPanel=({actor,onPhotoUpdate})=>{
   const [showManual,setShowManual]=useState(false);
   const [curErr,setCurErr]=useState(false);
   const aiName = db.get("actor-provider")?.toUpperCase() || 'AI';
-
+  useEffect(()=>setCurErr(false), [actor.photo]);
   const autoFetch=async()=>{
     setStatus("loading");setErrMsg("");setResult(null);setCurErr(false);
     try{const r=await fetchPhoto(actor.name);setResult(r);setStatus("preview");}
@@ -740,6 +741,7 @@ const AddActorModal=({onClose,onAdd})=>{
 // ══════════════════════════════════════════════════════════════════════════════
 const ActorCard=({actor,onClick})=>{
   const [err,setErr]=useState(false);
+ useEffect(()=>setErr(false), [actor.photo]); 
   return(
     <div className="actor-card" onClick={()=>onClick(actor)} style={S.card}>
       <div style={S.cardImgWrap}>
