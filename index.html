@@ -724,7 +724,10 @@ const PhotoPanel=({actor,onPhotoUpdate})=>{
 //  批量更新照片 Modal
 // ══════════════════════════════════════════════════════════════════════════════
 const BatchPhotoModal=({actors,onClose,onUpdate})=>{
-  const [queue,setQueue]=useState(actors.map(a=>({id:a.id,name:a.name,gender:a.gender,cur:a.photo,newPhoto:null,source:"",status:"pending"})));
+  // 只把没有照片的演员加入队列（photo 为空或为默认占位）
+  const noPhotoActors = actors.filter(a => !a.photo || a.photo.includes("pravatar.cc"));
+  const skippedCount  = actors.length - noPhotoActors.length;
+  const [queue,setQueue]=useState(noPhotoActors.map(a=>({id:a.id,name:a.name,gender:a.gender,cur:a.photo,newPhoto:null,source:"",status:"pending"})));
   const [running,setRunning]=useState(false);
   const [curIdx,setCurIdx]=useState(-1);
   const [done,setDone]=useState(false);
@@ -763,8 +766,16 @@ const BatchPhotoModal=({actors,onClose,onUpdate})=>{
           <button onClick={onClose} disabled={running} style={S.closeBtn}>✕</button>
         </div>
 
+        {/* 跳过提示 */}
+        {skippedCount>0&&<div style={{marginBottom:10,padding:"6px 10px",background:"#0d2010",border:"1px solid #34d39930",borderRadius:7,fontSize:11,color:"#6ee7b7"}}>
+          ✅ 已跳过 {skippedCount} 位有照片的演员，仅处理 {queue.length} 位无照片演员
+        </div>}
+        {queue.length===0&&<div style={{textAlign:"center",padding:"30px 0",color:"#4b5563",fontSize:13}}>
+          🎉 所有演员都已有形象照片，无需批量更新
+        </div>}
+
         {/* 模式切换 */}
-        {!running&&!done&&<div style={{display:"flex",gap:8,marginBottom:13}}>
+        {!running&&!done&&queue.length>0&&<div style={{display:"flex",gap:8,marginBottom:13}}>
           <button onClick={()=>setMode("wiki")} style={{...S.filterBtn,flex:1,padding:"8px 0",fontSize:12,...(mode==="wiki"?{background:"#0d2e1e",border:"1px solid #34d399",color:"#34d399"}:{})}}>
             📖 Wiki 查图<div style={{fontSize:10,color:mode==="wiki"?"#6ee7b7":"#4b5563",marginTop:2}}>免费·无需Key·约{queue.length*1}秒</div>
           </button>
@@ -804,7 +815,7 @@ const BatchPhotoModal=({actors,onClose,onUpdate})=>{
         </div>
         <div style={{display:"flex",gap:8,justifyContent:"flex-end"}}>
           <button onClick={onClose} disabled={running} style={S.btnSecondary}>关闭</button>
-          {!running&&!done&&<button onClick={runAll} style={{...S.btnPrimary,background:mode==="wiki"?"linear-gradient(135deg,#059669,#34d399)":undefined}}>🚀 开始{mode==="wiki"?"Wiki查图":"AI搜索"}</button>}
+          {!running&&!done&&queue.length>0&&<button onClick={runAll} style={{...S.btnPrimary,background:mode==="wiki"?"linear-gradient(135deg,#059669,#34d399)":undefined}}>🚀 开始{mode==="wiki"?"Wiki查图":"AI搜索"}</button>}
           {!running&&done&&<>
             <button onClick={()=>{setDone(false);setQueue(q=>q.map(a=>({...a,newPhoto:null,source:"",status:"pending"})));}} style={S.btnSecondary}>🔄 重新查</button>
             {doneCount>0&&<button onClick={applyAll} style={S.btnPrimary}>✅ 应用 {doneCount} 张</button>}
@@ -1087,7 +1098,7 @@ function App() {
 
       {aiStatus&&<div style={{textAlign:"center",padding:"4px",color:aiStatus.includes("✅")?"#34c759":"#ff9500",fontSize:12}}>{aiStatus}</div>}
 
-      <div style={{display:"flex",flex:1,overflow:"hidden"}}>
+      <div style={{display:"flex",flex:1,overflow:"hidden",minHeight:0}}>
         <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(178px,1fr))",gap:12,flex:1,overflowY:"auto",padding:16,alignContent:"start"}}>
           {filtered.length===0
             ?<div style={{gridColumn:"1/-1",textAlign:"center",color:"#4b5563",padding:60}}>暂无匹配演员</div>
@@ -1095,7 +1106,7 @@ function App() {
           }
         </div>
         {selected&&(
-          <div style={{width:300,minWidth:280,borderLeft:"1px solid #1e2535",overflowY:"auto",background:"#0a1020"}}>
+          <div style={{width:300,minWidth:280,borderLeft:"1px solid #1e2535",overflowY:"auto",background:"#0a1020",position:"sticky",top:0,height:"100%",flexShrink:0}}>
             <DetailDrawer
               actor={selected}
               onClose={()=>{setSelected(null);setAiStatus("");}}
