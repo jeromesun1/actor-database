@@ -128,6 +128,34 @@ async function fetchAIJson(prompt, useSearch = false) {
 }
 
 // 搜索演员照片
+// ── Wikipedia API 查图（免费，无需 Key）─────────────────────────────────────
+// 策略：中文维基 → 英文维基 → 均失败返回 null
+async function fetchPhotoWiki(name) {
+  // 尝试中英文两个版本的维基百科
+  const wikis = [
+    { lang: "zh", label: "中文维基百科" },
+    { lang: "en", label: "英文维基百科" },
+  ];
+  for (const { lang, label } of wikis) {
+    try {
+      // 第一步：搜索词条
+      const searchUrl = `https://${lang}.wikipedia.org/w/api.php?action=query&list=search&srsearch=${encodeURIComponent(name)}&srlimit=1&format=json&origin=*`;
+      const sr = await fetch(searchUrl).then(r => r.json());
+      const title = sr?.query?.search?.[0]?.title;
+      if (!title) continue;
+
+      // 第二步：获取该词条的首张图片
+      const imgUrl = `https://${lang}.wikipedia.org/w/api.php?action=query&titles=${encodeURIComponent(title)}&prop=pageimages&pithumbsize=500&format=json&origin=*`;
+      const ir = await fetch(imgUrl).then(r => r.json());
+      const pages = ir?.query?.pages || {};
+      const page = Object.values(pages)[0];
+      const thumb = page?.thumbnail?.source;
+      if (thumb) return { photoUrl: thumb, source: label };
+    } catch { /* 继续尝试下一个 */ }
+  }
+  return null; // 两个维基均无结果
+}
+
 async function fetchPhoto(name) {
   const provider = db.get("actor-provider") || "claude";
   // Claude 用 web_search 工具搜索真实图片；其他模型凭知识给出已知的可访问图片URL
@@ -612,16 +640,28 @@ const PhotoPanel=({actor,onPhotoUpdate})=>{
   const [curErr,setCurErr]=useState(false);
   const aiName = db.get("actor-provider")?.toUpperCase() || 'AI';
   useEffect(()=>setCurErr(false), [actor.photo]);
+
   const autoFetch=async()=>{
     setStatus("loading");setErrMsg("");setResult(null);setCurErr(false);
     try{const r=await fetchPhoto(actor.name);setResult(r);setStatus("preview");}
     catch(e){setStatus("error");setErrMsg(e.message);}
   };
+
+  const wikiFetch=async()=>{
+    setStatus("wiki-loading");setErrMsg("");setResult(null);setCurErr(false);
+    try{
+      const r=await fetchPhotoWiki(actor.name);
+      if(!r) throw new Error("维基百科无此演员词条或无图片");
+      setResult(r);setStatus("preview");
+    }catch(e){setStatus("error");setErrMsg(e.message);}
+  };
+
   const confirm=url=>{onPhotoUpdate(actor.id,url);setStatus("success");setResult(null);setTimeout(()=>setStatus("idle"),2500);};
   const applyManual=()=>{
     if(!manual.startsWith("http")){setErrMsg("请输入有效 URL");return;}
     setResult({photoUrl:manual,source:"手动输入"});setStatus("preview");setErrMsg("");
   };
+  const isLoading = status==="loading"||status==="wiki-loading";
 
   return(
     <div style={{background:"#0d1521",borderRadius:10,padding:12,border:"1px solid #1e2535",marginBottom:12}}>
@@ -629,7 +669,12 @@ const PhotoPanel=({actor,onPhotoUpdate})=>{
         <span style={{color:"#9ca3af",fontSize:10,fontWeight:600,letterSpacing:1,textTransform:"uppercase"}}>📷 形象照片</span>
         <div style={{display:"flex",gap:5}}>
           <button onClick={()=>setShowManual(v=>!v)} style={S.btnTiny}>{showManual?"收起":"手动URL"}</button>
-          <button onClick={autoFetch} disabled={status==="loading"} style={{...S.btnTinyPrimary,opacity:status==="loading"?.6:1}}>{status==="loading"?"⏳...":"🌐 自动匹配"}</button>
+          <button onClick={wikiFetch} disabled={isLoading} style={{...S.btnTiny,color:"#34d399",borderColor:"#34d39940",opacity:isLoading?.6:1}}>
+            {status==="wiki-loading"?"⏳...":"📖 Wiki"}
+          </button>
+          <button onClick={autoFetch} disabled={isLoading} style={{...S.btnTinyPrimary,opacity:isLoading?.6:1}}>
+            {status==="loading"?"⏳...":"🌐 AI匹配"}
+          </button>
         </div>
       </div>
       <div style={{display:"flex",gap:11,alignItems:"flex-start"}}>
@@ -639,14 +684,38 @@ const PhotoPanel=({actor,onPhotoUpdate})=>{
           <div style={{position:"absolute",bottom:-2,left:"50%",transform:"translateX(-50%)",background:"rgba(0,0,0,.8)",borderRadius:3,padding:"1px 4px",fontSize:9,color:"#6b7280",whiteSpace:"nowrap"}}>当前</div>
         </div>
         <div style={{flex:1,minWidth:0}}>
-          {status==="idle"&&!showManual&&<div style={{color:"#4b5563",fontSize:11,paddingTop:3,lineHeight:1.6}}>点击「🌐 自动匹配」通过 {aiName} 搜索真实形象照</div>}
-          {status==="loading"&&<div style={{paddingTop:3}}><div style={{color:"#60a5fa",fontSize:11,marginBottom:7,animation:"pulse 1.2s infinite"}}>● {aiName} 正在搜索图片...</div><div style={{background:"#1e2535",height:3,borderRadius:4,overflow:"hidden"}}><div style={{height:"100%",width:"70%",background:"linear-gradient(90deg,#3b82f6,#7c3aed)",borderRadius:4,animation:"scan 1.5s ease-in-out infinite"}}/></div></div>}
-          {status==="preview"&&result&&<div><div style={{fontSize:10,color:"#4b5563",marginBottom:5}}>🔍 {result.source}</div><img src={result.photoUrl} style={{width:"100%",maxHeight:90,objectFit:"cover",borderRadius:6,border:"2px solid #3b82f6",marginBottom:6,display:"block"}} onError={()=>{setStatus("error");setErrMsg("图片无法加载");setResult(null);}}/><div style={{display:"flex",gap:5}}><button onClick={()=>confirm(result.photoUrl)} style={{...S.btnTinyPrimary,flex:1}}>✅ 应用</button><button onClick={()=>{setStatus("idle");setResult(null);}} style={{...S.btnTiny,flex:1}}>✕</button></div></div>}
+          {status==="idle"&&!showManual&&<div style={{color:"#4b5563",fontSize:11,paddingTop:3,lineHeight:1.7}}>
+            <span style={{color:"#34d399"}}>📖 Wiki</span> 免费查询维基百科图片<br/>
+            <span style={{color:"#60a5fa"}}>🌐 AI匹配</span> 用 {aiName} 联网搜索
+          </div>}
+          {isLoading&&<div style={{paddingTop:3}}>
+            <div style={{color:status==="wiki-loading"?"#34d399":"#60a5fa",fontSize:11,marginBottom:7,animation:"pulse 1.2s infinite"}}>
+              ● {status==="wiki-loading"?"查询维基百科...":aiName+" 正在搜索..."}
+            </div>
+            <div style={{background:"#1e2535",height:3,borderRadius:4,overflow:"hidden"}}>
+              <div style={{height:"100%",width:"70%",background:status==="wiki-loading"?"linear-gradient(90deg,#34d399,#059669)":"linear-gradient(90deg,#3b82f6,#7c3aed)",borderRadius:4,animation:"scan 1.5s ease-in-out infinite"}}/>
+            </div>
+          </div>}
+          {status==="preview"&&result&&<div>
+            <div style={{fontSize:10,color:"#4b5563",marginBottom:5}}>🔍 {result.source}</div>
+            <img src={result.photoUrl} style={{width:"100%",maxHeight:90,objectFit:"cover",borderRadius:6,border:"2px solid #3b82f6",marginBottom:6,display:"block"}} onError={()=>{setStatus("error");setErrMsg("图片无法加载");setResult(null);}}/>
+            <div style={{display:"flex",gap:5}}>
+              <button onClick={()=>confirm(result.photoUrl)} style={{...S.btnTinyPrimary,flex:1}}>✅ 应用</button>
+              <button onClick={()=>{setStatus("idle");setResult(null);}} style={{...S.btnTiny,flex:1}}>✕</button>
+            </div>
+          </div>}
           {status==="success"&&<div style={{color:"#34c759",fontSize:11,paddingTop:3}}>✅ 照片已更新！</div>}
           {status==="error"&&<div style={{color:"#ff9500",fontSize:11,paddingTop:3}}>⚠️ {errMsg}</div>}
         </div>
       </div>
-      {showManual&&<div style={{marginTop:10,paddingTop:10,borderTop:"1px solid #1e2535"}}><div style={{fontSize:10,color:"#6b7280",marginBottom:5}}>粘贴图片直链（jpg/png/webp）</div><div style={{display:"flex",gap:5}}><input value={manual} onChange={e=>setManual(e.target.value)} placeholder="https://..." style={{...S.input,flex:1,fontSize:11,padding:"5px 9px"}} onKeyDown={e=>e.key==="Enter"&&applyManual()}/><button onClick={applyManual} style={S.btnTinyPrimary}>预览</button></div>{errMsg&&status!=="preview"&&<div style={{color:"#ff4d6d",fontSize:10,marginTop:3}}>{errMsg}</div>}</div>}
+      {showManual&&<div style={{marginTop:10,paddingTop:10,borderTop:"1px solid #1e2535"}}>
+        <div style={{fontSize:10,color:"#6b7280",marginBottom:5}}>粘贴图片直链（jpg/png/webp）</div>
+        <div style={{display:"flex",gap:5}}>
+          <input value={manual} onChange={e=>setManual(e.target.value)} placeholder="https://..." style={{...S.input,flex:1,fontSize:11,padding:"5px 9px"}} onKeyDown={e=>e.key==="Enter"&&applyManual()}/>
+          <button onClick={applyManual} style={S.btnTinyPrimary}>预览</button>
+        </div>
+        {errMsg&&status!=="preview"&&<div style={{color:"#ff4d6d",fontSize:10,marginTop:3}}>{errMsg}</div>}
+      </div>}
     </div>
   );
 };
@@ -659,29 +728,65 @@ const BatchPhotoModal=({actors,onClose,onUpdate})=>{
   const [running,setRunning]=useState(false);
   const [curIdx,setCurIdx]=useState(-1);
   const [done,setDone]=useState(false);
+  const [mode,setMode]=useState("wiki"); // "wiki" | "ai"
   const aiName = db.get("actor-provider")?.toUpperCase() || 'AI';
 
   const runAll=async()=>{
     setRunning(true);setDone(false);setQueue(q=>q.map(a=>({...a,newPhoto:null,source:"",status:"pending"})));
     for(let i=0;i<queue.length;i++){
       setCurIdx(i);setQueue(q=>q.map((a,idx)=>idx===i?{...a,status:"loading"}:a));
-      try{const r=await fetchPhoto(queue[i].name);await new Promise((res,rej)=>{const img=new Image();img.onload=res;img.onerror=rej;img.src=r.photoUrl;setTimeout(rej,6000);});setQueue(q=>q.map((a,idx)=>idx===i?{...a,newPhoto:r.photoUrl,source:r.source,status:"done"}:a));}
+      try{
+        let r;
+        if(mode==="wiki"){
+          r = await fetchPhotoWiki(queue[i].name);
+          if(!r) throw new Error("维基无结果");
+        } else {
+          r = await fetchPhoto(queue[i].name);
+          await new Promise((res,rej)=>{const img=new Image();img.onload=res;img.onerror=rej;img.src=r.photoUrl;setTimeout(rej,6000);});
+        }
+        setQueue(q=>q.map((a,idx)=>idx===i?{...a,newPhoto:r.photoUrl,source:r.source,status:"done"}:a));
+      }
       catch{setQueue(q=>q.map((a,idx)=>idx===i?{...a,status:"error"}:a));}
-      await new Promise(r=>setTimeout(r,1200));
+      await new Promise(r=>setTimeout(r,mode==="wiki"?600:1200));
     }
     setCurIdx(-1);setRunning(false);setDone(true);
   };
   const applyAll=()=>{queue.filter(a=>a.status==="done"&&a.newPhoto).forEach(a=>onUpdate(a.id,a.newPhoto));onClose();};
   const doneCount=queue.filter(a=>a.status==="done").length;
   const errCount=queue.filter(a=>a.status==="error").length;
-  
+
   return(
     <div style={S.overlay}>
       <div style={{...S.modal,maxWidth:520}}>
-        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:13}}><h3 style={{color:"#e2e8f0",margin:0,fontSize:15,fontWeight:700}}>🌐 批量更新形象照</h3><button onClick={onClose} disabled={running} style={S.closeBtn}>✕</button></div>
-        <div style={{background:"#111827",borderRadius:8,padding:"9px 13px",marginBottom:12,fontSize:11,color:"#6b7280",lineHeight:1.7}}>通过 <span style={{color:"#60a5fa"}}>{aiName}</span> 为每位演员匹配形象照，共 <span style={{color:"#e2e8f0"}}>{queue.length}</span> 位，预计约 <span style={{color:"#e2e8f0"}}>{queue.length*4}</span> 秒。</div>
-        {(running||done)&&<div style={{display:"flex",gap:14,marginBottom:8,padding:"7px 12px",background:"#0d1521",borderRadius:8,fontSize:12}}><span style={{color:"#34c759"}}>✅ {doneCount}</span><span style={{color:"#ff4d6d"}}>❌ {errCount}</span><span style={{color:"#6b7280"}}>○ {queue.filter(a=>a.status==="pending").length}</span>{running&&curIdx>=0&&<span style={{color:"#60a5fa",marginLeft:"auto"}}>→ {queue[curIdx]?.name}</span>}</div>}
-        {running&&<div style={{background:"#1e2535",height:3,borderRadius:4,overflow:"hidden",marginBottom:10}}><div style={{height:"100%",width:`${((doneCount+errCount)/queue.length)*100}%`,background:"linear-gradient(90deg,#3b82f6,#7c3aed)",borderRadius:4,transition:"width .4s"}}/></div>}
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:13}}>
+          <h3 style={{color:"#e2e8f0",margin:0,fontSize:15,fontWeight:700}}>🖼 批量更新形象照</h3>
+          <button onClick={onClose} disabled={running} style={S.closeBtn}>✕</button>
+        </div>
+
+        {/* 模式切换 */}
+        {!running&&!done&&<div style={{display:"flex",gap:8,marginBottom:13}}>
+          <button onClick={()=>setMode("wiki")} style={{...S.filterBtn,flex:1,padding:"8px 0",fontSize:12,...(mode==="wiki"?{background:"#0d2e1e",border:"1px solid #34d399",color:"#34d399"}:{})}}>
+            📖 Wiki 查图<div style={{fontSize:10,color:mode==="wiki"?"#6ee7b7":"#4b5563",marginTop:2}}>免费·无需Key·约{queue.length*1}秒</div>
+          </button>
+          <button onClick={()=>setMode("ai")} style={{...S.filterBtn,flex:1,padding:"8px 0",fontSize:12,...(mode==="ai"?{background:"#0d1b3e",border:"1px solid #3b82f6",color:"#93c5fd"}:{})}}>
+            🌐 {aiName} 匹配<div style={{fontSize:10,color:mode==="ai"?"#93c5fd":"#4b5563",marginTop:2}}>联网搜索·需Key·约{queue.length*4}秒</div>
+          </button>
+        </div>}
+
+        {running&&<div style={{background:"#111827",borderRadius:8,padding:"7px 12px",marginBottom:10,fontSize:11,color:"#6b7280"}}>
+          使用 <span style={{color:mode==="wiki"?"#34d399":"#60a5fa"}}>{mode==="wiki"?"维基百科":aiName}</span> 查询中，共 {queue.length} 位...
+        </div>}
+
+        {(running||done)&&<div style={{display:"flex",gap:14,marginBottom:8,padding:"7px 12px",background:"#0d1521",borderRadius:8,fontSize:12}}>
+          <span style={{color:"#34c759"}}>✅ {doneCount}</span>
+          <span style={{color:"#ff4d6d"}}>❌ {errCount}</span>
+          <span style={{color:"#6b7280"}}>○ {queue.filter(a=>a.status==="pending").length}</span>
+          {running&&curIdx>=0&&<span style={{color:"#60a5fa",marginLeft:"auto"}}>→ {queue[curIdx]?.name}</span>}
+        </div>}
+        {running&&<div style={{background:"#1e2535",height:3,borderRadius:4,overflow:"hidden",marginBottom:10}}>
+          <div style={{height:"100%",width:`${((doneCount+errCount)/queue.length)*100}%`,background:mode==="wiki"?"linear-gradient(90deg,#34d399,#059669)":"linear-gradient(90deg,#3b82f6,#7c3aed)",borderRadius:4,transition:"width .4s"}}/>
+        </div>}
+
         <div style={{maxHeight:260,overflowY:"auto",marginBottom:13,border:"1px solid #1e2535",borderRadius:8}}>
           {queue.map((a,i)=>(
             <div key={a.id} style={{display:"flex",alignItems:"center",gap:10,padding:"8px 12px",borderBottom:i<queue.length-1?"1px solid #1e2535":"none",background:i===curIdx?"#0d1b2a":"transparent"}}>
@@ -689,15 +794,21 @@ const BatchPhotoModal=({actors,onClose,onUpdate})=>{
                 <div style={{width:28,height:38,borderRadius:5,overflow:"hidden",border:"1px solid #1e2535"}}>{a.cur?<img src={a.cur} style={{width:"100%",height:"100%",objectFit:"cover"}} onError={e=>e.target.style.display="none"}/>:<div style={{width:"100%",height:"100%",background:"#1a2233",display:"flex",alignItems:"center",justifyContent:"center",fontSize:12}}>{a.gender==="female"?"👩":"👨"}</div>}</div>
                 {a.newPhoto&&<><span style={{display:"flex",alignItems:"center",color:"#3b82f6",fontSize:9}}>→</span><div style={{width:28,height:38,borderRadius:5,overflow:"hidden",border:"2px solid #3b82f6"}}><img src={a.newPhoto} style={{width:"100%",height:"100%",objectFit:"cover"}} onError={e=>e.target.style.display="none"}/></div></>}
               </div>
-              <div style={{flex:1}}><div style={{fontSize:13,color:"#e2e8f0"}}>{a.name}</div>{a.source&&<div style={{fontSize:10,color:"#4b5563"}}>{a.source}</div>}</div>
-              <div style={{fontSize:15}}>{a.status==="pending"&&<span style={{color:"#374151"}}>○</span>}{a.status==="loading"&&<span style={{color:"#60a5fa",display:"inline-block",animation:"spin 1s linear infinite"}}>◐</span>}{a.status==="done"&&<span>✅</span>}{a.status==="error"&&<span>❌</span>}</div>
+              <div style={{flex:1}}>
+                <div style={{fontSize:13,color:"#e2e8f0"}}>{a.name}</div>
+                {a.source&&<div style={{fontSize:10,color:"#4b5563"}}>{a.source}</div>}
+              </div>
+              <div style={{fontSize:15}}>{a.status==="pending"&&<span style={{color:"#374151"}}>○</span>}{a.status==="loading"&&<span style={{color:"#60a5fa",display:"inline-block",animation:"spin 1s linear infinite"}}>◐</span>}{a.status==="done"&&<span>✅</span>}{a.status==="error"&&<span style={{fontSize:12}}>❌</span>}</div>
             </div>
           ))}
         </div>
         <div style={{display:"flex",gap:8,justifyContent:"flex-end"}}>
           <button onClick={onClose} disabled={running} style={S.btnSecondary}>关闭</button>
-          {!running&&!done&&<button onClick={runAll} style={S.btnPrimary}>🚀 开始搜索</button>}
-          {!running&&done&&<><button onClick={runAll} style={S.btnSecondary}>🔄 重搜</button>{doneCount>0&&<button onClick={applyAll} style={S.btnPrimary}>✅ 应用 {doneCount} 张</button>}</>}
+          {!running&&!done&&<button onClick={runAll} style={{...S.btnPrimary,background:mode==="wiki"?"linear-gradient(135deg,#059669,#34d399)":undefined}}>🚀 开始{mode==="wiki"?"Wiki查图":"AI搜索"}</button>}
+          {!running&&done&&<>
+            <button onClick={()=>{setDone(false);setQueue(q=>q.map(a=>({...a,newPhoto:null,source:"",status:"pending"})));}} style={S.btnSecondary}>🔄 重新查</button>
+            {doneCount>0&&<button onClick={applyAll} style={S.btnPrimary}>✅ 应用 {doneCount} 张</button>}
+          </>}
           {running&&<div style={{color:"#60a5fa",fontSize:12,display:"flex",alignItems:"center",gap:5}}><span style={{animation:"spin 1s linear infinite",display:"inline-block"}}>◐</span>{doneCount+errCount}/{queue.length}</div>}
         </div>
       </div>
