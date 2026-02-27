@@ -31,33 +31,35 @@
 <div id="root"></div>
 <script>
 // ══════════════════════════════════════════════════════════════════════════════
-//  配置区 — 部署时修改这两项
+//  配置区 — 部署时只需修改这一项
 // ══════════════════════════════════════════════════════════════════════════════
 window.__APP_CONFIG__ = {
-  ACCESS_PASSWORD: "actors2025",        // ← 访问密码
-  ENCODED_KEY:     "PASTE_BASE64_HERE"  // ← btoa("sk-ant-api03-...") 的结果
+  ACCESS_PASSWORD: "actors2025"  // ← 改成你自己的访问密码
+  // API Key 由管理员在登录界面输入，无需在此配置
 };
 </script>
 <script type="text/babel">
 const { useState, useEffect, useRef } = React;
 
 // ── 配置读取 ──────────────────────────────────────────────────────────────────
-const CFG      = window.__APP_CONFIG__ || {};
+const CFG        = window.__APP_CONFIG__ || {};
 const ACCESS_PWD = CFG.ACCESS_PASSWORD || "actors2025";
-const getKey   = () => { try { return atob(CFG.ENCODED_KEY||""); } catch { return ""; } };
+// API Key 从 localStorage 读取（由管理员登录时设置）
+const getKey  = () => db.get("actor-api-key") || "";
+const getDSKey = () => db.get("actor-ds-key")  || "";
 
 // ── 种子数据 ──────────────────────────────────────────────────────────────────
 const SEED = [
-  {id:1, name:"易烊千玺",gender:"male",  age:24,region:"mainland",photo:"https://i.pravatar.cc/300?img=11",works:["长津湖","少年的你","奇迹·笨小孩"],currentWorks:["小小的我"],hotness:95,updatedAt:"2025-01",sentiment:null},
-  {id:2, name:"赵丽颖",  gender:"female",age:37,region:"mainland",photo:"https://i.pravatar.cc/300?img=47",works:["花千骨","楚乔传","幸福到万家"],currentWorks:["胡同"],hotness:88,updatedAt:"2025-01",sentiment:null},
-  {id:3, name:"肖战",    gender:"male",  age:33,region:"mainland",photo:"https://i.pravatar.cc/300?img=13",works:["陈情令","斗罗大陆","王者天下"],currentWorks:["藏海传"],hotness:92,updatedAt:"2025-01",sentiment:null},
-  {id:4, name:"迪丽热巴",gender:"female",age:32,region:"mainland",photo:"https://i.pravatar.cc/300?img=45",works:["三生三世十里桃花","你是我的荣耀","特战荣耀"],currentWorks:["永夜星河"],hotness:90,updatedAt:"2025-01",sentiment:null},
-  {id:5, name:"王一博",  gender:"male",  age:27,region:"mainland",photo:"https://i.pravatar.cc/300?img=15",works:["陈情令","有翡","无名"],currentWorks:["追风者"],hotness:93,updatedAt:"2025-01",sentiment:null},
-  {id:6, name:"古天乐",  gender:"male",  age:53,region:"hmt",     photo:"https://i.pravatar.cc/300?img=12",works:["神雕侠侣","寻秦记","明日战记"],currentWorks:["潜行"],hotness:82,updatedAt:"2025-01",sentiment:{score:78,positive:82,neutral:14,negative:4,keywords:["公益形象","稳定发挥","低调"],recentEvents:["捐建学校超200所","新片票房表现稳健"]}},
-  {id:7, name:"刘德华",  gender:"male",  age:63,region:"hmt",     photo:"https://i.pravatar.cc/300?img=14",works:["无间道","天下无贼","扫毒"],currentWorks:[],hotness:85,updatedAt:"2025-01",sentiment:{score:92,positive:91,neutral:7,negative:2,keywords:["国民天王","努力","慈善"],recentEvents:["香港演唱会圆满结束","入选年度影响力艺人"]}},
-  {id:8, name:"林志玲",  gender:"female",age:49,region:"hmt",     photo:"https://i.pravatar.cc/300?img=46",works:["赤壁","大话西游3","健忘村"],currentWorks:[],hotness:70,updatedAt:"2025-01",sentiment:{score:85,positive:88,neutral:8,negative:4,keywords:["温柔","婚后低调","好感度高"],recentEvents:["偶尔出席公益活动","维持良好公众形象"]}},
-  {id:9, name:"周润发",  gender:"male",  age:69,region:"hmt",     photo:"https://i.pravatar.cc/300?img=16",works:["英雄本色","赌神","卧虎藏龙"],currentWorks:[],hotness:80,updatedAt:"2025-01",sentiment:{score:96,positive:95,neutral:4,negative:1,keywords:["节俭","捐款","传奇影星"],recentEvents:["宣布将捐出大部分财产","获终身成就奖"]}},
-  {id:10,name:"张钧甯",  gender:"female",age:40,region:"hmt",     photo:"https://i.pravatar.cc/300?img=48",works:["犀利人妻","花漾","镇魂街"],currentWorks:["夜行者"],hotness:75,updatedAt:"2025-01",sentiment:{score:80,positive:83,neutral:13,negative:4,keywords:["亲和力","实力派","专业"],recentEvents:["主演新剧口碑出色","登杂志封面"]}},
+  {id:1, name:"易烊千玺",gender:"male",  age:24,region:"mainland",photo:"https://upload.wikimedia.org/wikipedia/commons/thumb/2/2c/Jackson_Yee_at_the_35th_Hong_Kong_Film_Awards_in_2016.jpg/440px-Jackson_Yee_at_the_35th_Hong_Kong_Film_Awards_in_2016.jpg",works:["长津湖","少年的你","奇迹·笨小孩"],currentWorks:["小小的我"],hotness:95,updatedAt:"2025-01",sentiment:null},
+  {id:2, name:"赵丽颖",  gender:"female",age:37,region:"mainland",photo:"https://upload.wikimedia.org/wikipedia/commons/thumb/5/55/Zhao_Liying_at_Weibo_Movie_Awards_2016.jpg/440px-Zhao_Liying_at_Weibo_Movie_Awards_2016.jpg",works:["花千骨","楚乔传","幸福到万家"],currentWorks:["胡同"],hotness:88,updatedAt:"2025-01",sentiment:null},
+  {id:3, name:"肖战",    gender:"male",  age:33,region:"mainland",photo:"https://upload.wikimedia.org/wikipedia/commons/thumb/e/e8/Xiao_Zhan_in_2019.jpg/440px-Xiao_Zhan_in_2019.jpg",works:["陈情令","斗罗大陆","王者天下"],currentWorks:["藏海传"],hotness:92,updatedAt:"2025-01",sentiment:null},
+  {id:4, name:"迪丽热巴",gender:"female",age:32,region:"mainland",photo:"https://upload.wikimedia.org/wikipedia/commons/thumb/e/e0/Dilraba_Dilmurat_in_2019.jpg/440px-Dilraba_Dilmurat_in_2019.jpg",works:["三生三世十里桃花","你是我的荣耀","特战荣耀"],currentWorks:["永夜星河"],hotness:90,updatedAt:"2025-01",sentiment:null},
+  {id:5, name:"王一博",  gender:"male",  age:27,region:"mainland",photo:"https://upload.wikimedia.org/wikipedia/commons/thumb/d/d8/Wang_Yibo_in_2020.jpg/440px-Wang_Yibo_in_2020.jpg",works:["陈情令","有翡","无名"],currentWorks:["追风者"],hotness:93,updatedAt:"2025-01",sentiment:null},
+  {id:6, name:"古天乐",  gender:"male",  age:53,region:"hmt",     photo:"https://upload.wikimedia.org/wikipedia/commons/thumb/0/09/Louis_Koo_2013.jpg/440px-Louis_Koo_2013.jpg",works:["神雕侠侣","寻秦记","明日战记"],currentWorks:["潜行"],hotness:82,updatedAt:"2025-01",sentiment:{score:78,positive:82,neutral:14,negative:4,keywords:["公益形象","稳定发挥","低调"],recentEvents:["捐建学校超200所","新片票房表现稳健"]}},
+  {id:7, name:"刘德华",  gender:"male",  age:63,region:"hmt",     photo:"https://upload.wikimedia.org/wikipedia/commons/thumb/4/47/Andy_Lau_2013.jpg/440px-Andy_Lau_2013.jpg",works:["无间道","天下无贼","扫毒"],currentWorks:[],hotness:85,updatedAt:"2025-01",sentiment:{score:92,positive:91,neutral:7,negative:2,keywords:["国民天王","努力","慈善"],recentEvents:["香港演唱会圆满结束","入选年度影响力艺人"]}},
+  {id:8, name:"林志玲",  gender:"female",age:49,region:"hmt",     photo:"https://upload.wikimedia.org/wikipedia/commons/thumb/3/3e/Lin_Chi-ling_2013.jpg/440px-Lin_Chi-ling_2013.jpg",works:["赤壁","大话西游3","健忘村"],currentWorks:[],hotness:70,updatedAt:"2025-01",sentiment:{score:85,positive:88,neutral:8,negative:4,keywords:["温柔","婚后低调","好感度高"],recentEvents:["偶尔出席公益活动","维持良好公众形象"]}},
+  {id:9, name:"周润发",  gender:"male",  age:69,region:"hmt",     photo:"https://upload.wikimedia.org/wikipedia/commons/thumb/0/09/Chow_Yun-fat_2012.jpg/440px-Chow_Yun-fat_2012.jpg",works:["英雄本色","赌神","卧虎藏龙"],currentWorks:[],hotness:80,updatedAt:"2025-01",sentiment:{score:96,positive:95,neutral:4,negative:1,keywords:["节俭","捐款","传奇影星"],recentEvents:["宣布将捐出大部分财产","获终身成就奖"]}},
+  {id:10,name:"张钧甯",  gender:"female",age:40,region:"hmt",     photo:"https://upload.wikimedia.org/wikipedia/commons/thumb/6/6e/Alyssa_Chia_2016.jpg/440px-Alyssa_Chia_2016.jpg",works:["犀利人妻","花漾","镇魂街"],currentWorks:["夜行者"],hotness:75,updatedAt:"2025-01",sentiment:{score:80,positive:83,neutral:13,negative:4,keywords:["亲和力","实力派","专业"],recentEvents:["主演新剧口碑出色","登杂志封面"]}},
 ];
 
 // ── 工具 ──────────────────────────────────────────────────────────────────────
@@ -122,29 +124,88 @@ async function fetchActorInfo(name) {
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
-//  登录页
+//  登录页（密码 + API Key 一起设置）
 // ══════════════════════════════════════════════════════════════════════════════
 function LoginPage({onLogin}) {
-  const [pwd,setPwd]=useState(""); const [err,setErr]=useState(false); const [shake,setShake]=useState(false);
-  const submit=()=>{
-    if(pwd===ACCESS_PWD){db.set("actor-auth",ACCESS_PWD);onLogin();}
-    else{setErr(true);setShake(true);setTimeout(()=>setShake(false),500);setTimeout(()=>setErr(false),2000);}
+  const [pwd,setPwd]         = useState("");
+  const [apiKey,setApiKey]   = useState(()=>db.get("actor-api-key")||"");
+  const [showKey,setShowKey] = useState(false);
+  const [err,setErr]         = useState("");
+  const [testing,setTesting] = useState(false);
+  const [shake,setShake]     = useState(false);
+
+  const doShake = () => { setShake(true); setTimeout(()=>setShake(false),500); };
+
+  const submit = async () => {
+    // 1. 验证密码
+    if (pwd !== ACCESS_PWD) { setErr("访问密码错误"); doShake(); return; }
+    // 2. 验证 API Key
+    if (!apiKey.trim()) { setErr("请填写 Anthropic API Key"); doShake(); return; }
+    if (!apiKey.startsWith("sk-ant-")) { setErr("Key 格式错误，应以 sk-ant- 开头"); doShake(); return; }
+    // 3. 测试 Key 连通性
+    setTesting(true); setErr("");
+    try {
+      const res = await fetch("https://api.anthropic.com/v1/messages", {
+        method:"POST",
+        headers:{"Content-Type":"application/json","x-api-key":apiKey,"anthropic-version":"2023-06-01","anthropic-dangerous-direct-browser-access":"true"},
+        body: JSON.stringify({model:"claude-sonnet-4-20250514",max_tokens:5,messages:[{role:"user",content:"hi"}]})
+      });
+      if(!res.ok){ const e=await res.json().catch(()=>({})); throw new Error(e.error?.message||`HTTP ${res.status}`); }
+      // 成功：保存并进入
+      db.set("actor-api-key", apiKey.trim());
+      db.set("actor-auth", ACCESS_PWD);
+      onLogin();
+    } catch(e) {
+      setErr("API Key 验证失败：" + e.message);
+      doShake();
+    } finally { setTesting(false); }
   };
+
   return(
-    <div style={{minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center",background:"radial-gradient(ellipse at 60% 40%,#0d1b3e 0%,#080d14 70%)"}}>
-      <div style={{width:"100%",maxWidth:380,padding:40,background:"#0d1521",border:"1px solid #1e2535",borderRadius:20,animation:shake?"shake .4s ease":"fadeIn .5s ease"}}>
-        <div style={{textAlign:"center",marginBottom:32}}>
-          <div style={{fontSize:56,marginBottom:14,filter:"drop-shadow(0 0 20px #3b82f680)"}}>🎬</div>
-          <h1 style={{fontSize:24,fontWeight:800,background:"linear-gradient(135deg,#e2e8f0,#93c5fd)",WebkitBackgroundClip:"text",WebkitTextFillColor:"transparent",marginBottom:6}}>华语演员库</h1>
-          <p style={{color:"#374151",fontSize:12,letterSpacing:2}}>CHINESE ACTOR DATABASE</p>
+    <div style={{minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center",background:"radial-gradient(ellipse at 60% 40%,#0d1b3e 0%,#080d14 70%)",padding:20}}>
+      <div style={{width:"100%",maxWidth:420,padding:36,background:"#0d1521",border:"1px solid #1e2535",borderRadius:20,animation:shake?"shake .4s ease":"fadeIn .5s ease"}}>
+        {/* Logo */}
+        <div style={{textAlign:"center",marginBottom:28}}>
+          <div style={{fontSize:52,marginBottom:12,filter:"drop-shadow(0 0 20px #3b82f680)"}}>🎬</div>
+          <h1 style={{fontSize:22,fontWeight:800,background:"linear-gradient(135deg,#e2e8f0,#93c5fd)",WebkitBackgroundClip:"text",WebkitTextFillColor:"transparent",marginBottom:5}}>华语演员库</h1>
+          <p style={{color:"#374151",fontSize:11,letterSpacing:2}}>CHINESE ACTOR DATABASE</p>
         </div>
-        <div style={{marginBottom:20}}>
-          <input type="password" value={pwd} onChange={e=>{setPwd(e.target.value);setErr(false);}} onKeyDown={e=>e.key==="Enter"&&submit()} placeholder="请输入访问密码"
-            style={{width:"100%",padding:"12px 16px",background:err?"#2a1215":"#111827",border:`1px solid ${err?"#ff4d6d":"#1e2535"}`,borderRadius:10,color:"#e2e8f0",fontSize:14,outline:"none",textAlign:"center",letterSpacing:4,transition:"all .2s"}}/>
-          {err&&<div style={{color:"#ff4d6d",fontSize:12,textAlign:"center",marginTop:8}}>密码错误，请重试</div>}
+
+        {/* 访问密码 */}
+        <div style={{marginBottom:13}}>
+          <label style={{display:"block",fontSize:11,color:"#6b7280",marginBottom:5}}>访问密码</label>
+          <input type="password" value={pwd} onChange={e=>{setPwd(e.target.value);setErr("");}}
+            onKeyDown={e=>e.key==="Enter"&&submit()} placeholder="请输入访问密码"
+            style={{width:"100%",padding:"10px 14px",background:"#111827",border:"1px solid #1e2535",borderRadius:8,color:"#e2e8f0",fontSize:13,outline:"none",letterSpacing:3,boxSizing:"border-box"}}/>
         </div>
-        <button onClick={submit} style={{width:"100%",padding:12,background:"linear-gradient(135deg,#1d4ed8,#7c3aed)",border:"none",borderRadius:10,color:"#fff",fontSize:15,fontWeight:700,cursor:"pointer",letterSpacing:2}}>进 入</button>
-        <div style={{marginTop:20,padding:"12px 16px",background:"#111827",borderRadius:8,fontSize:11,color:"#374151",lineHeight:1.7,textAlign:"center"}}>请联系管理员获取访问密码</div>
+
+        {/* API Key */}
+        <div style={{marginBottom:16}}>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:5}}>
+            <label style={{fontSize:11,color:"#6b7280"}}>Anthropic API Key</label>
+            <a href="https://console.anthropic.com/keys" target="_blank" rel="noreferrer" style={{fontSize:10,color:"#60a5fa",textDecoration:"none"}}>获取 Key →</a>
+          </div>
+          <div style={{position:"relative"}}>
+            <input type={showKey?"text":"password"} value={apiKey} onChange={e=>{setApiKey(e.target.value);setErr("");}}
+              onKeyDown={e=>e.key==="Enter"&&submit()} placeholder="sk-ant-api03-..."
+              style={{width:"100%",padding:"10px 38px 10px 14px",background:"#111827",border:"1px solid #1e2535",borderRadius:8,color:"#e2e8f0",fontSize:12,outline:"none",boxSizing:"border-box"}}/>
+            <button onClick={()=>setShowKey(v=>!v)} style={{position:"absolute",right:10,top:"50%",transform:"translateY(-50%)",background:"none",border:"none",color:"#4b5563",cursor:"pointer",fontSize:15,padding:0}}>
+              {showKey?"🙈":"👁"}
+            </button>
+          </div>
+          <div style={{marginTop:6,padding:"8px 10px",background:"#111827",borderRadius:6,fontSize:10,color:"#374151",lineHeight:1.7}}>
+            Key 仅保存在你的浏览器本地，不上传任何服务器。每台设备首次访问需填写一次。
+          </div>
+        </div>
+
+        {/* 错误提示 */}
+        {err && <div style={{marginBottom:12,padding:"8px 12px",background:"#2a1215",border:"1px solid #ff4d6d40",borderRadius:7,color:"#ff4d6d",fontSize:12}}>⚠️ {err}</div>}
+
+        {/* 登录按钮 */}
+        <button onClick={submit} disabled={testing||!pwd||!apiKey}
+          style={{width:"100%",padding:12,background:(!pwd||!apiKey||testing)?"#1e2535":"linear-gradient(135deg,#1d4ed8,#7c3aed)",border:"none",borderRadius:10,color:(!pwd||!apiKey||testing)?"#4b5563":"#fff",fontSize:14,fontWeight:700,cursor:(!pwd||!apiKey||testing)?"default":"pointer",letterSpacing:1,transition:"all .2s"}}>
+          {testing?"🔄 验证中...":"进 入"}
+        </button>
       </div>
     </div>
   );
@@ -795,7 +856,7 @@ function App() {
             <button onClick={()=>setShowImport(true)} style={{...S.btnSecondary,borderColor:"#7c3aed50",color:"#c4b5fd"}}>📋 批量导入</button>
             <button onClick={()=>setShowBatch(true)} style={S.btnSecondary}>🌐 批量更新照片</button>
             <button onClick={()=>setShowAdd(true)} style={S.btnPrimary}>＋ 添加演员</button>
-            <button onClick={()=>{db.set("actor-auth",null);setAuthed(false);}} style={{...S.btnTiny,fontSize:10}}>退出</button>
+            <button onClick={()=>{db.set("actor-auth",null);db.set("actor-api-key",null);setAuthed(false);}} style={{...S.btnTiny,fontSize:10}}>退出</button>
           </div>
         </div>
       </header>
