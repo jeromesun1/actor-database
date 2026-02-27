@@ -35,7 +35,6 @@
 // ══════════════════════════════════════════════════════════════════════════════
 window.__APP_CONFIG__ = {
   ACCESS_PASSWORD: "actors2025"  // ← 改成你自己的访问密码
-  // API Key 由管理员在登录界面输入，无需在此配置
 };
 </script>
 <script type="text/babel">
@@ -44,9 +43,6 @@ const { useState, useEffect, useRef } = React;
 // ── 配置读取 ──────────────────────────────────────────────────────────────────
 const CFG        = window.__APP_CONFIG__ || {};
 const ACCESS_PWD = CFG.ACCESS_PASSWORD || "actors2025";
-// API Key 从 localStorage 读取（由管理员登录时设置）
-const getKey  = () => db.get("actor-api-key") || "";
-const getDSKey = () => db.get("actor-ds-key")  || "";
 
 // ── 种子数据 ──────────────────────────────────────────────────────────────────
 const SEED = [
@@ -70,38 +66,76 @@ const db = {
 };
 const parseList = s => s.split(/[，,\n]/).map(x=>x.trim()).filter(Boolean);
 
-// ── Claude API ────────────────────────────────────────────────────────────────
-async function callClaude(body) {
-  const key = getKey();
-  if (!key) throw new Error("API Key 未配置");
-  const res = await fetch("https://api.anthropic.com/v1/messages", {
-    method:"POST",
-    headers:{"Content-Type":"application/json","x-api-key":key,"anthropic-version":"2023-06-01","anthropic-dangerous-direct-browser-access":"true"},
-    body: JSON.stringify({model:"claude-sonnet-4-20250514",max_tokens:1200,...body})
-  });
-  if (!res.ok) { const e=await res.json().catch(()=>({})); throw new Error(e.error?.message||`HTTP ${res.status}`); }
-  return res.json();
+// ── 统一 AI API 调用层 ────────────────────────────────────────────────────────────────
+async function fetchAIJson(prompt, useSearch = false) {
+  const provider = db.get("actor-provider") || "claude";
+  const key = db.get(`actor-api-key-${provider}`);
+  if (!key) throw new Error(`${provider} API Key 未配置`);
+
+  let text = "";
+
+  if (provider === "claude") {
+    const body = {
+      model: "claude-3-5-sonnet-20241022",
+      max_tokens: 1200,
+      messages: [{role: "user", content: prompt}]
+    };
+    if (useSearch) body.tools = [{type:"web_search_20250305",name:"web_search"}];
+    const res = await fetch("https://api.anthropic.com/v1/messages", {
+      method:"POST",
+      headers:{"Content-Type":"application/json","x-api-key":key,"anthropic-version":"2023-06-01","anthropic-dangerous-direct-browser-access":"true"},
+      body: JSON.stringify(body)
+    });
+    if (!res.ok) { const e=await res.json().catch(()=>({})); throw new Error(e.error?.message||`HTTP ${res.status}`); }
+    const data = await res.json();
+    text = data.content?.find(b=>b.type==="text")?.text||"";
+  } 
+  else if (provider === "gemini") {
+    const body = {
+      contents: [{parts: [{text: prompt}]}],
+      generationConfig: { responseMimeType: "application/json" }
+    };
+    const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${key}`, {
+      method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body: JSON.stringify(body)
+    });
+    if (!res.ok) { const e=await res.json().catch(()=>({})); throw new Error(e.error?.message||`HTTP ${res.status}`); }
+    const data = await res.json();
+    text = data.candidates?.[0]?.content?.parts?.[0]?.text||"";
+  } 
+  else if (provider === "deepseek") {
+    const res = await fetch("https://api.deepseek.com/chat/completions", {
+      method:"POST",
+      headers:{"Content-Type":"application/json","Authorization":`Bearer ${key}`},
+      body: JSON.stringify({
+        model: "deepseek-chat",
+        messages: [{role: "user", content: prompt}],
+        response_format: { type: "json_object" }
+      })
+    });
+    if (!res.ok) { const e=await res.json().catch(()=>({})); throw new Error(e.error?.message||`HTTP ${res.status}`); }
+    const data = await res.json();
+    text = data.choices?.[0]?.message?.content||"";
+  }
+
+  // 提取 JSON
+  const i1 = text.indexOf("{");
+  const i2 = text.lastIndexOf("}");
+  if(i1<0 || i2<0) throw new Error("解析失败：AI 未返回标准 JSON");
+  return JSON.parse(text.slice(i1, i2+1));
 }
 
 // 搜索演员照片
 async function fetchPhoto(name) {
-  const data = await callClaude({
-    tools:[{type:"web_search_20250305",name:"web_search"}],
-    messages:[{role:"user",content:`请搜索演员"${name}"的官方形象照片，找一张真实可访问的图片直链URL（jpg/png/webp）。优先百度百科、豆瓣、时光网。只返回JSON不要其他文字：{"photoUrl":"<URL>","source":"<来源>"}`}]
-  });
-  const text = data.content?.find(b=>b.type==="text")?.text||"";
-  const i1=text.indexOf("{"),i2=text.lastIndexOf("}");
-  if(i1<0||i2<0) throw new Error("解析失败");
-  const p = JSON.parse(text.slice(i1,i2+1));
+  const p = await fetchAIJson(`请搜索演员"${name}"的官方形象照片，找一张真实可访问的图片直链URL（jpg/png/webp）。优先百度百科、豆瓣、时光网。只返回JSON不要其他文字：{"photoUrl":"<URL>","source":"<来源>"}`, true);
   if(!p.photoUrl?.startsWith("http")) throw new Error("无效URL");
   return p;
 }
 
 // 批量导入：用 AI 获取演员完整信息
 async function fetchActorInfo(name) {
-  const data = await callClaude({
-    tools:[{type:"web_search_20250305",name:"web_search"}],
-    messages:[{role:"user",content:`请搜索中国演员"${name}"的详细信息，包括：性别、年龄、所属地区（内地/港澳台）、代表作品（最多5部）、当前在播影视（若无则空数组）、当前热度（0-100整数）、以及一张形象照片URL。
+  return await fetchAIJson(`请搜索中国演员"${name}"的详细信息，包括：性别、年龄、所属地区（内地/港澳台）、代表作品（最多5部）、当前在播影视（若无则空数组）、当前热度（0-100整数）、以及一张形象照片URL。
 如果是港澳台演员，还需要舆情信息（综合评分0-100，正面/中性/负面百分比，热点标签3-5个，近期事件2-3条）。
 
 只返回JSON，不要任何其他文字：
@@ -115,20 +149,16 @@ async function fetchActorInfo(name) {
   "currentWorks": ["在播作品1"],
   "hotness": <整数0-100>,
   "sentiment": null或{"score":<整数>,"positive":<整数>,"neutral":<整数>,"negative":<整数>,"keywords":["标签1","标签2"],"recentEvents":["事件1","事件2"]}
-}`}]
-  });
-  const text = data.content?.find(b=>b.type==="text")?.text||"";
-  const i1=text.indexOf("{"),i2=text.lastIndexOf("}");
-  if(i1<0||i2<0) throw new Error("解析失败");
-  return JSON.parse(text.slice(i1,i2+1));
+}`, true);
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
-//  登录页（密码 + API Key 一起设置）
+//  登录页（支持模型切换）
 // ══════════════════════════════════════════════════════════════════════════════
 function LoginPage({onLogin}) {
   const [pwd,setPwd]         = useState("");
-  const [apiKey,setApiKey]   = useState(()=>db.get("actor-api-key")||"");
+  const [provider,setProvider] = useState(()=>db.get("actor-provider")||"claude");
+  const [apiKey,setApiKey]   = useState(()=>db.get(`actor-api-key-${provider}`)||"");
   const [showKey,setShowKey] = useState(false);
   const [err,setErr]         = useState("");
   const [testing,setTesting] = useState(false);
@@ -136,23 +166,44 @@ function LoginPage({onLogin}) {
 
   const doShake = () => { setShake(true); setTimeout(()=>setShake(false),500); };
 
+  const handleProviderChange = (p) => {
+    setProvider(p);
+    setApiKey(db.get(`actor-api-key-${p}`) || "");
+    setErr("");
+  };
+
   const submit = async () => {
-    // 1. 验证密码
     if (pwd !== ACCESS_PWD) { setErr("访问密码错误"); doShake(); return; }
-    // 2. 验证 API Key
-    if (!apiKey.trim()) { setErr("请填写 Anthropic API Key"); doShake(); return; }
-    if (!apiKey.startsWith("sk-ant-")) { setErr("Key 格式错误，应以 sk-ant- 开头"); doShake(); return; }
-    // 3. 测试 Key 连通性
+    if (!apiKey.trim()) { setErr("请填写 API Key"); doShake(); return; }
+    
+    // 基础格式校验
+    if (provider === "claude" && !apiKey.startsWith("sk-ant-")) { setErr("Claude Key 应以 sk-ant- 开头"); doShake(); return; }
+    if (provider === "gemini" && !apiKey.startsWith("AIza")) { setErr("Gemini Key 应以 AIza 开头"); doShake(); return; }
+    if (provider === "deepseek" && !apiKey.startsWith("sk-")) { setErr("DeepSeek Key 应以 sk- 开头"); doShake(); return; }
+
     setTesting(true); setErr("");
     try {
-      const res = await fetch("https://api.anthropic.com/v1/messages", {
-        method:"POST",
-        headers:{"Content-Type":"application/json","x-api-key":apiKey,"anthropic-version":"2023-06-01","anthropic-dangerous-direct-browser-access":"true"},
-        body: JSON.stringify({model:"claude-sonnet-4-20250514",max_tokens:5,messages:[{role:"user",content:"hi"}]})
-      });
+      let testUrl, testBody, testHeaders;
+      if (provider === "claude") {
+         testUrl = "https://api.anthropic.com/v1/messages";
+         testHeaders = {"Content-Type":"application/json","x-api-key":apiKey,"anthropic-version":"2023-06-01","anthropic-dangerous-direct-browser-access":"true"};
+         testBody = JSON.stringify({model:"claude-3-5-sonnet-20241022",max_tokens:5,messages:[{role:"user",content:"hi"}]});
+      } else if (provider === "gemini") {
+         testUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`;
+         testHeaders = {"Content-Type":"application/json"};
+         testBody = JSON.stringify({contents: [{parts: [{text: "hi"}]}]});
+      } else if (provider === "deepseek") {
+         testUrl = "https://api.deepseek.com/chat/completions";
+         testHeaders = {"Content-Type":"application/json","Authorization":`Bearer ${apiKey}`};
+         testBody = JSON.stringify({model:"deepseek-chat",messages:[{role:"user",content:"hi"}]});
+      }
+
+      const res = await fetch(testUrl, { method:"POST", headers:testHeaders, body:testBody });
       if(!res.ok){ const e=await res.json().catch(()=>({})); throw new Error(e.error?.message||`HTTP ${res.status}`); }
-      // 成功：保存并进入
-      db.set("actor-api-key", apiKey.trim());
+      
+      // 保存设置
+      db.set("actor-provider", provider);
+      db.set(`actor-api-key-${provider}`, apiKey.trim());
       db.set("actor-auth", ACCESS_PWD);
       onLogin();
     } catch(e) {
@@ -160,6 +211,8 @@ function LoginPage({onLogin}) {
       doShake();
     } finally { setTesting(false); }
   };
+
+  const ph = provider==="claude" ? "sk-ant-..." : provider==="gemini" ? "AIza..." : "sk-...";
 
   return(
     <div style={{minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center",background:"radial-gradient(ellipse at 60% 40%,#0d1b3e 0%,#080d14 70%)",padding:20}}>
@@ -171,9 +224,19 @@ function LoginPage({onLogin}) {
           <p style={{color:"#374151",fontSize:11,letterSpacing:2}}>CHINESE ACTOR DATABASE</p>
         </div>
 
+        {/* 模型切换 */}
+        <div style={{display:"flex",gap:8,marginBottom:18}}>
+          {[{id:"deepseek",name:"DeepSeek"},{id:"gemini",name:"Gemini"},{id:"claude",name:"Claude"}].map(p=>(
+            <button key={p.id} onClick={()=>handleProviderChange(p.id)}
+              style={{flex:1, padding:"8px", borderRadius:8, border:"1px solid #1e2535", background:provider===p.id?"#1e3a5f":"#111827", color:provider===p.id?"#93c5fd":"#6b7280", cursor:"pointer", fontSize:12, fontWeight:provider===p.id?600:400, transition:"all .2s"}}>
+              {p.name}
+            </button>
+          ))}
+        </div>
+
         {/* 访问密码 */}
         <div style={{marginBottom:13}}>
-          <label style={{display:"block",fontSize:11,color:"#6b7280",marginBottom:5}}>访问密码</label>
+          <label style={{display:"block",fontSize:11,color:"#6b7280",marginBottom:5}}>系统访问密码</label>
           <input type="password" value={pwd} onChange={e=>{setPwd(e.target.value);setErr("");}}
             onKeyDown={e=>e.key==="Enter"&&submit()} placeholder="请输入访问密码"
             style={{width:"100%",padding:"10px 14px",background:"#111827",border:"1px solid #1e2535",borderRadius:8,color:"#e2e8f0",fontSize:13,outline:"none",letterSpacing:3,boxSizing:"border-box"}}/>
@@ -182,19 +245,18 @@ function LoginPage({onLogin}) {
         {/* API Key */}
         <div style={{marginBottom:16}}>
           <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:5}}>
-            <label style={{fontSize:11,color:"#6b7280"}}>Anthropic API Key</label>
-            <a href="https://console.anthropic.com/keys" target="_blank" rel="noreferrer" style={{fontSize:10,color:"#60a5fa",textDecoration:"none"}}>获取 Key →</a>
+            <label style={{fontSize:11,color:"#6b7280"}}>{provider.charAt(0).toUpperCase() + provider.slice(1)} API Key</label>
           </div>
           <div style={{position:"relative"}}>
             <input type={showKey?"text":"password"} value={apiKey} onChange={e=>{setApiKey(e.target.value);setErr("");}}
-              onKeyDown={e=>e.key==="Enter"&&submit()} placeholder="sk-ant-api03-..."
+              onKeyDown={e=>e.key==="Enter"&&submit()} placeholder={ph}
               style={{width:"100%",padding:"10px 38px 10px 14px",background:"#111827",border:"1px solid #1e2535",borderRadius:8,color:"#e2e8f0",fontSize:12,outline:"none",boxSizing:"border-box"}}/>
             <button onClick={()=>setShowKey(v=>!v)} style={{position:"absolute",right:10,top:"50%",transform:"translateY(-50%)",background:"none",border:"none",color:"#4b5563",cursor:"pointer",fontSize:15,padding:0}}>
               {showKey?"🙈":"👁"}
             </button>
           </div>
           <div style={{marginTop:6,padding:"8px 10px",background:"#111827",borderRadius:6,fontSize:10,color:"#374151",lineHeight:1.7}}>
-            Key 仅保存在你的浏览器本地，不上传任何服务器。每台设备首次访问需填写一次。
+            Key 仅保存在你的浏览器本地，不上传任何中间服务器。
           </div>
         </div>
 
@@ -212,7 +274,7 @@ function LoginPage({onLogin}) {
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
-//  批量导入 Modal（新功能）
+//  批量导入 Modal
 // ══════════════════════════════════════════════════════════════════════════════
 function BatchImportModal({existingNames, onClose, onImport}) {
   const [raw,setRaw]       = useState("");
@@ -257,7 +319,6 @@ function BatchImportModal({existingNames, onClose, onImport}) {
     }
     setCurIdx(-1);
     setStep("done");
-    // store results ref for apply
     window.__importResults__ = results;
   };
 
@@ -271,6 +332,7 @@ function BatchImportModal({existingNames, onClose, onImport}) {
   const dupNames = names.filter(n=>existingNames.includes(n));
   const doneCount = queue.filter(x=>x.status==="done").length;
   const errCount  = queue.filter(x=>x.status==="error").length;
+  const aiName = db.get("actor-provider")?.toUpperCase() || 'AI';
 
   return(
     <div style={S.overlay}>
@@ -286,7 +348,7 @@ function BatchImportModal({existingNames, onClose, onImport}) {
         {step==="input"&&(
           <>
             <div style={{background:"#111827",borderRadius:8,padding:"10px 14px",marginBottom:14,fontSize:11,color:"#6b7280",lineHeight:1.8}}>
-              每行一个演员姓名，或用逗号分隔。AI 将自动搜索每位演员的<span style={{color:"#93c5fd"}}>完整信息 + 形象照片</span>，无需手动填写。
+              每行一个演员姓名，或用逗号分隔。将通过 <span style={{color:"#93c5fd"}}>{aiName}</span> 自动搜索每位演员的完整信息和形象照片，无需手动填写。
             </div>
             <textarea
               value={raw}
@@ -312,7 +374,6 @@ function BatchImportModal({existingNames, onClose, onImport}) {
         {/* ── Step 2 & 3: 进度 & 结果 ── */}
         {(step==="running"||step==="done")&&(
           <>
-            {/* 统计栏 */}
             <div style={{display:"flex",gap:16,marginBottom:10,padding:"8px 12px",background:"#0d1521",borderRadius:8,fontSize:12,flexWrap:"wrap"}}>
               <span style={{color:"#34c759"}}>✅ {doneCount} 成功</span>
               <span style={{color:"#ff4d6d"}}>❌ {errCount} 失败</span>
@@ -320,26 +381,20 @@ function BatchImportModal({existingNames, onClose, onImport}) {
               {step==="running"&&curIdx>=0&&<span style={{color:"#60a5fa",marginLeft:"auto"}}>正在处理：{queue[curIdx]?.name}</span>}
               {step==="done"&&<span style={{color:"#34c759",marginLeft:"auto"}}>全部完成</span>}
             </div>
-
-            {/* 进度条 */}
             {step==="running"&&(
               <div style={{background:"#1e2535",height:3,borderRadius:4,overflow:"hidden",marginBottom:12}}>
                 <div style={{height:"100%",width:`${((doneCount+errCount)/queue.length)*100}%`,background:"linear-gradient(90deg,#3b82f6,#7c3aed)",borderRadius:4,transition:"width .4s"}}/>
               </div>
             )}
-
-            {/* 演员列表 */}
             <div style={{maxHeight:360,overflowY:"auto",border:"1px solid #1e2535",borderRadius:8,marginBottom:14}}>
               {queue.map((item,i)=>(
                 <div key={i} style={{display:"flex",alignItems:"center",gap:10,padding:"10px 12px",borderBottom:i<queue.length-1?"1px solid #1e2535":"none",background:i===curIdx?"#0d1b2a":"transparent",animation:item.status==="done"?"fadeIn .3s ease":"none"}}>
-                  {/* 照片缩略 */}
                   <div style={{width:32,height:44,borderRadius:5,overflow:"hidden",border:"1px solid #1e2535",flexShrink:0,background:"#1a2233",display:"flex",alignItems:"center",justifyContent:"center",fontSize:14}}>
                     {item.actor?.photo
                       ?<img src={item.actor.photo} style={{width:"100%",height:"100%",objectFit:"cover"}} onError={e=>e.target.style.display="none"}/>
                       :(item.actor?.gender==="female"?"👩":"👨")
                     }
                   </div>
-                  {/* 信息 */}
                   <div style={{flex:1,minWidth:0}}>
                     <div style={{fontSize:13,color:"#e2e8f0",fontWeight:600}}>{item.name}</div>
                     {item.actor&&(
@@ -350,7 +405,6 @@ function BatchImportModal({existingNames, onClose, onImport}) {
                     )}
                     {item.error&&<div style={{fontSize:10,color:"#ff4d6d",marginTop:1}}>⚠ {item.error}</div>}
                   </div>
-                  {/* 状态图标 */}
                   <div style={{fontSize:16,flexShrink:0}}>
                     {item.status==="pending" &&<span style={{color:"#374151"}}>○</span>}
                     {item.status==="loading" &&<span style={{color:"#60a5fa",display:"inline-block",animation:"spin 1s linear infinite"}}>◐</span>}
@@ -360,7 +414,6 @@ function BatchImportModal({existingNames, onClose, onImport}) {
                 </div>
               ))}
             </div>
-
             <div style={{display:"flex",gap:8,justifyContent:"flex-end"}}>
               <button onClick={onClose} disabled={step==="running"} style={S.btnSecondary}>关闭</button>
               {step==="done"&&doneCount>0&&(
@@ -375,7 +428,7 @@ function BatchImportModal({existingNames, onClose, onImport}) {
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
-//  演员信息编辑面板（新功能）
+//  演员信息编辑面板
 // ══════════════════════════════════════════════════════════════════════════════
 function EditPanel({actor, onSave, onCancel, onDelete}) {
   const [form,setForm] = useState({
@@ -387,7 +440,6 @@ function EditPanel({actor, onSave, onCancel, onDelete}) {
     works:         actor.works.join("，"),
     currentWorks:  actor.currentWorks.join("，"),
     hotness:       String(actor.hotness),
-    // sentiment fields (hmt only)
     sentScore:     String(actor.sentiment?.score||80),
     sentPos:       String(actor.sentiment?.positive||80),
     sentNeu:       String(actor.sentiment?.neutral||15),
@@ -441,13 +493,11 @@ function EditPanel({actor, onSave, onCancel, onDelete}) {
 
   return(
     <div style={{animation:"slideIn .2s ease"}}>
-      {/* 顶部操作行 */}
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14}}>
         <h4 style={{color:"#93c5fd",margin:0,fontSize:12,fontWeight:600,letterSpacing:1,textTransform:"uppercase"}}>✏️ 编辑信息</h4>
         <button onClick={onCancel} style={S.btnTiny}>← 取消</button>
       </div>
 
-      {/* 照片 */}
       <div style={S.field}>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:5}}>
           <label style={S.label}>形象照片 URL</label>
@@ -466,7 +516,6 @@ function EditPanel({actor, onSave, onCancel, onDelete}) {
         </div>
       </div>
 
-      {/* 基本信息 */}
       <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
         <F label="姓名 *" k="name"/>
         <F label="年龄" k="age" type="number"/>
@@ -494,7 +543,6 @@ function EditPanel({actor, onSave, onCancel, onDelete}) {
         <input value={form.currentWorks} onChange={e=>set("currentWorks",e.target.value)} style={S.input}/>
       </div>
 
-      {/* 港澳台舆情字段 */}
       {form.region==="hmt"&&(
         <div style={{background:"#0d1b2a",borderRadius:8,padding:10,border:"1px solid #1e3a5f",marginBottom:9}}>
           <div style={{color:"#60a5fa",fontSize:10,fontWeight:600,letterSpacing:1,marginBottom:8,textTransform:"uppercase"}}>舆情数据（港澳台）</div>
@@ -515,7 +563,6 @@ function EditPanel({actor, onSave, onCancel, onDelete}) {
         </div>
       )}
 
-      {/* 保存 & 删除 */}
       <div style={{display:"flex",gap:8,marginTop:4}}>
         <button onClick={save} style={{...S.btnPrimary,flex:1}}>💾 保存修改</button>
         {!confirmDel
@@ -548,6 +595,7 @@ const PhotoPanel=({actor,onPhotoUpdate})=>{
   const [manual,setManual]=useState("");
   const [showManual,setShowManual]=useState(false);
   const [curErr,setCurErr]=useState(false);
+  const aiName = db.get("actor-provider")?.toUpperCase() || 'AI';
 
   const autoFetch=async()=>{
     setStatus("loading");setErrMsg("");setResult(null);setCurErr(false);
@@ -576,8 +624,8 @@ const PhotoPanel=({actor,onPhotoUpdate})=>{
           <div style={{position:"absolute",bottom:-2,left:"50%",transform:"translateX(-50%)",background:"rgba(0,0,0,.8)",borderRadius:3,padding:"1px 4px",fontSize:9,color:"#6b7280",whiteSpace:"nowrap"}}>当前</div>
         </div>
         <div style={{flex:1,minWidth:0}}>
-          {status==="idle"&&!showManual&&<div style={{color:"#4b5563",fontSize:11,paddingTop:3,lineHeight:1.6}}>点击「🌐 自动匹配」通过 AI 搜索真实形象照</div>}
-          {status==="loading"&&<div style={{paddingTop:3}}><div style={{color:"#60a5fa",fontSize:11,marginBottom:7,animation:"pulse 1.2s infinite"}}>● AI 正在搜索图片...</div><div style={{background:"#1e2535",height:3,borderRadius:4,overflow:"hidden"}}><div style={{height:"100%",width:"70%",background:"linear-gradient(90deg,#3b82f6,#7c3aed)",borderRadius:4,animation:"scan 1.5s ease-in-out infinite"}}/></div></div>}
+          {status==="idle"&&!showManual&&<div style={{color:"#4b5563",fontSize:11,paddingTop:3,lineHeight:1.6}}>点击「🌐 自动匹配」通过 {aiName} 搜索真实形象照</div>}
+          {status==="loading"&&<div style={{paddingTop:3}}><div style={{color:"#60a5fa",fontSize:11,marginBottom:7,animation:"pulse 1.2s infinite"}}>● {aiName} 正在搜索图片...</div><div style={{background:"#1e2535",height:3,borderRadius:4,overflow:"hidden"}}><div style={{height:"100%",width:"70%",background:"linear-gradient(90deg,#3b82f6,#7c3aed)",borderRadius:4,animation:"scan 1.5s ease-in-out infinite"}}/></div></div>}
           {status==="preview"&&result&&<div><div style={{fontSize:10,color:"#4b5563",marginBottom:5}}>🔍 {result.source}</div><img src={result.photoUrl} style={{width:"100%",maxHeight:90,objectFit:"cover",borderRadius:6,border:"2px solid #3b82f6",marginBottom:6,display:"block"}} onError={()=>{setStatus("error");setErrMsg("图片无法加载");setResult(null);}}/><div style={{display:"flex",gap:5}}><button onClick={()=>confirm(result.photoUrl)} style={{...S.btnTinyPrimary,flex:1}}>✅ 应用</button><button onClick={()=>{setStatus("idle");setResult(null);}} style={{...S.btnTiny,flex:1}}>✕</button></div></div>}
           {status==="success"&&<div style={{color:"#34c759",fontSize:11,paddingTop:3}}>✅ 照片已更新！</div>}
           {status==="error"&&<div style={{color:"#ff9500",fontSize:11,paddingTop:3}}>⚠️ {errMsg}</div>}
@@ -589,13 +637,15 @@ const PhotoPanel=({actor,onPhotoUpdate})=>{
 };
 
 // ══════════════════════════════════════════════════════════════════════════════
-//  批量更新照片 Modal（已有功能）
+//  批量更新照片 Modal
 // ══════════════════════════════════════════════════════════════════════════════
 const BatchPhotoModal=({actors,onClose,onUpdate})=>{
   const [queue,setQueue]=useState(actors.map(a=>({id:a.id,name:a.name,gender:a.gender,cur:a.photo,newPhoto:null,source:"",status:"pending"})));
   const [running,setRunning]=useState(false);
   const [curIdx,setCurIdx]=useState(-1);
   const [done,setDone]=useState(false);
+  const aiName = db.get("actor-provider")?.toUpperCase() || 'AI';
+
   const runAll=async()=>{
     setRunning(true);setDone(false);setQueue(q=>q.map(a=>({...a,newPhoto:null,source:"",status:"pending"})));
     for(let i=0;i<queue.length;i++){
@@ -609,11 +659,12 @@ const BatchPhotoModal=({actors,onClose,onUpdate})=>{
   const applyAll=()=>{queue.filter(a=>a.status==="done"&&a.newPhoto).forEach(a=>onUpdate(a.id,a.newPhoto));onClose();};
   const doneCount=queue.filter(a=>a.status==="done").length;
   const errCount=queue.filter(a=>a.status==="error").length;
+  
   return(
     <div style={S.overlay}>
       <div style={{...S.modal,maxWidth:520}}>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:13}}><h3 style={{color:"#e2e8f0",margin:0,fontSize:15,fontWeight:700}}>🌐 批量更新形象照</h3><button onClick={onClose} disabled={running} style={S.closeBtn}>✕</button></div>
-        <div style={{background:"#111827",borderRadius:8,padding:"9px 13px",marginBottom:12,fontSize:11,color:"#6b7280",lineHeight:1.7}}>通过 <span style={{color:"#60a5fa"}}>Claude AI</span> 为每位演员匹配形象照，共 <span style={{color:"#e2e8f0"}}>{queue.length}</span> 位，预计约 <span style={{color:"#e2e8f0"}}>{queue.length*4}</span> 秒。</div>
+        <div style={{background:"#111827",borderRadius:8,padding:"9px 13px",marginBottom:12,fontSize:11,color:"#6b7280",lineHeight:1.7}}>通过 <span style={{color:"#60a5fa"}}>{aiName}</span> 为每位演员匹配形象照，共 <span style={{color:"#e2e8f0"}}>{queue.length}</span> 位，预计约 <span style={{color:"#e2e8f0"}}>{queue.length*4}</span> 秒。</div>
         {(running||done)&&<div style={{display:"flex",gap:14,marginBottom:8,padding:"7px 12px",background:"#0d1521",borderRadius:8,fontSize:12}}><span style={{color:"#34c759"}}>✅ {doneCount}</span><span style={{color:"#ff4d6d"}}>❌ {errCount}</span><span style={{color:"#6b7280"}}>○ {queue.filter(a=>a.status==="pending").length}</span>{running&&curIdx>=0&&<span style={{color:"#60a5fa",marginLeft:"auto"}}>→ {queue[curIdx]?.name}</span>}</div>}
         {running&&<div style={{background:"#1e2535",height:3,borderRadius:4,overflow:"hidden",marginBottom:10}}><div style={{height:"100%",width:`${((doneCount+errCount)/queue.length)*100}%`,background:"linear-gradient(90deg,#3b82f6,#7c3aed)",borderRadius:4,transition:"width .4s"}}/></div>}
         <div style={{maxHeight:260,overflowY:"auto",marginBottom:13,border:"1px solid #1e2535",borderRadius:8}}>
@@ -647,6 +698,7 @@ const AddActorModal=({onClose,onAdd})=>{
   const [photoLoading,setPhotoLoading]=useState(false);
   const [photoStatus,setPhotoStatus]=useState("");
   const set=(k,v)=>setForm(f=>({...f,[k]:v}));
+  
   const autoPhoto=async()=>{
     if(!form.name.trim()){setPhotoStatus("❗ 请先填写姓名");return;}
     setPhotoLoading(true);setPhotoStatus("🔍 搜索中...");
@@ -705,7 +757,7 @@ const ActorCard=({actor,onClick})=>{
 };
 
 // ══════════════════════════════════════════════════════════════════════════════
-//  详情抽屉（含查看 / 编辑 两种模式）
+//  详情抽屉
 // ══════════════════════════════════════════════════════════════════════════════
 const DetailDrawer=({actor,onClose,onRefresh,onPhotoUpdate,onSave,onDelete,loading})=>{
   const [mode,setMode]=useState("view"); // view | edit
@@ -717,16 +769,10 @@ const DetailDrawer=({actor,onClose,onRefresh,onPhotoUpdate,onSave,onDelete,loadi
         <h2 style={{color:"#e2e8f0",margin:0,fontSize:17,fontWeight:700}}>{actor.name}</h2>
         <button onClick={()=>setMode("view")} style={S.closeBtn}>✕</button>
       </div>
-      <EditPanel
-        actor={actor}
-        onSave={updated=>{onSave(updated);setMode("view");}}
-        onCancel={()=>setMode("view")}
-        onDelete={()=>{onDelete(actor.id);onClose();}}
-      />
+      <EditPanel actor={actor} onSave={updated=>{onSave(updated);setMode("view");}} onCancel={()=>setMode("view")} onDelete={()=>{onDelete(actor.id);onClose();}}/>
     </div>
   );
 
-  // ── 查看模式 ──
   return(
     <div style={S.drawer}>
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14}}>
@@ -830,10 +876,7 @@ function App() {
       ?`你是中国娱乐行业专家。为演员"${actor.name}"（港澳台）模拟最新数据，只返回JSON不含其他文字：{"hotness":<整数0-100>,"currentWorks":[<最多3个>],"sentiment":{"score":<整数>,"positive":<整数>,"neutral":<整数>,"negative":<整数>,"keywords":[<3-5个标签>],"recentEvents":[<2-3条>]}}`
       :`你是中国娱乐行业专家。为演员"${actor.name}"（内地）模拟最新数据，只返回JSON不含其他文字：{"hotness":<整数0-100>,"currentWorks":[<最多3个>]}`;
     try{
-      const data=await callClaude({messages:[{role:"user",content:prompt}]});
-      const text=data.content?.[0]?.text||"";
-      const i1=text.indexOf("{"),i2=text.lastIndexOf("}");
-      const updates=JSON.parse(text.slice(i1,i2+1));
+      const updates = await fetchAIJson(prompt, false);
       const now=new Date().toISOString().slice(0,7);
       setActors(p=>p.map(a=>a.id===actor.id?{...a,...updates,updatedAt:now}:a));
       setSelected(p=>p?{...p,...updates,updatedAt:now}:null);
@@ -842,26 +885,26 @@ function App() {
     finally{setAiLoading(false);}
   };
 
+  const aiName = db.get("actor-provider")?.toUpperCase() || 'AI';
+
   return(
     <div style={{minHeight:"100vh",background:"#080d14",color:"#e2e8f0",display:"flex",flexDirection:"column"}}>
-      {/* ── Header ── */}
       <header style={{background:"linear-gradient(135deg,#0d1b2a 0%,#1a1035 100%)",borderBottom:"1px solid #1e2535",padding:"12px 18px"}}>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",maxWidth:1400,margin:"0 auto",flexWrap:"wrap",gap:9}}>
           <div>
             <h1 style={{margin:0,fontSize:19,fontWeight:800,background:"linear-gradient(90deg,#e2e8f0,#93c5fd)",WebkitBackgroundClip:"text",WebkitTextFillColor:"transparent"}}>🎬 华语演员库</h1>
-            <p style={{margin:"2px 0 0",color:"#374151",fontSize:10,letterSpacing:1}}>内地 · 港澳台 · 热度追踪 · 舆情监控 · AI形象照 · 批量导入</p>
+            <p style={{margin:"2px 0 0",color:"#374151",fontSize:10,letterSpacing:1}}>基于 {aiName} 引擎驱动 · 热度追踪 · 舆情监控</p>
           </div>
           <div style={{display:"flex",gap:7,alignItems:"center",flexWrap:"wrap"}}>
             <span style={{background:"#1e2535",color:"#6b7280",padding:"4px 10px",borderRadius:20,fontSize:11}}>{actors.length} 位演员</span>
             <button onClick={()=>setShowImport(true)} style={{...S.btnSecondary,borderColor:"#7c3aed50",color:"#c4b5fd"}}>📋 批量导入</button>
             <button onClick={()=>setShowBatch(true)} style={S.btnSecondary}>🌐 批量更新照片</button>
             <button onClick={()=>setShowAdd(true)} style={S.btnPrimary}>＋ 添加演员</button>
-            <button onClick={()=>{db.set("actor-auth",null);db.set("actor-api-key",null);setAuthed(false);}} style={{...S.btnTiny,fontSize:10}}>退出</button>
+            <button onClick={()=>{db.set("actor-auth",null);setAuthed(false);}} style={{...S.btnTiny,fontSize:10}}>退出 (当前模型: {aiName})</button>
           </div>
         </div>
       </header>
 
-      {/* ── 筛选栏 ── */}
       <div style={{padding:"10px 18px",background:"#0a1020",borderBottom:"1px solid #1e2535"}}>
         <input placeholder="🔍 搜索演员或作品..." value={search} onChange={e=>setSearch(e.target.value)} style={{...S.input,width:"100%",maxWidth:340,marginBottom:8,padding:"7px 12px",fontSize:13}}/>
         <div style={{display:"flex",gap:5,flexWrap:"wrap",alignItems:"center"}}>
@@ -882,7 +925,6 @@ function App() {
 
       {aiStatus&&<div style={{textAlign:"center",padding:"4px",color:aiStatus.includes("✅")?"#34c759":"#ff9500",fontSize:12}}>{aiStatus}</div>}
 
-      {/* ── 主内容 ── */}
       <div style={{display:"flex",flex:1,overflow:"hidden"}}>
         <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(178px,1fr))",gap:12,flex:1,overflowY:"auto",padding:16,alignContent:"start"}}>
           {filtered.length===0
