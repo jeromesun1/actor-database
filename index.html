@@ -1033,7 +1033,7 @@ function App() {
   const aiName = db.get("actor-provider")?.toUpperCase() || 'AI';
 
   return(
-    <div style={{minHeight:"100vh",background:"#080d14",color:"#e2e8f0",display:"flex",flexDirection:"column"}}>
+    <div style={{height:"100vh",overflow:"hidden",background:"#080d14",color:"#e2e8f0",display:"flex",flexDirection:"column"}}>
       <header style={{background:"linear-gradient(135deg,#0d1b2a 0%,#1a1035 100%)",borderBottom:"1px solid #1e2535",padding:"12px 18px"}}>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",maxWidth:1400,margin:"0 auto",flexWrap:"wrap",gap:9}}>
           <div>
@@ -1106,7 +1106,7 @@ function App() {
           }
         </div>
         {selected&&(
-          <div style={{width:300,minWidth:280,borderLeft:"1px solid #1e2535",overflowY:"auto",background:"#0a1020",position:"sticky",top:0,height:"100%",flexShrink:0}}>
+          <div style={{width:300,minWidth:280,borderLeft:"1px solid #1e2535",overflowY:"auto",background:"#0a1020",flexShrink:0}}>
             <DetailDrawer
               actor={selected}
               onClose={()=>{setSelected(null);setAiStatus("");}}
