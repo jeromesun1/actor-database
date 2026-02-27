@@ -1099,14 +1099,14 @@ function App() {
       {aiStatus&&<div style={{textAlign:"center",padding:"4px",color:aiStatus.includes("✅")?"#34c759":"#ff9500",fontSize:12}}>{aiStatus}</div>}
 
       <div style={{display:"flex",alignItems:"flex-start"}}>
-        <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(178px,1fr))",gap:12,flex:1,padding:16,alignContent:"start"}}>
+        <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(178px,1fr))",gap:12,flex:1,padding:16,alignContent:"start",marginRight:selected?300:0,transition:"margin-right .2s"}}>
           {filtered.length===0
             ?<div style={{gridColumn:"1/-1",textAlign:"center",color:"#4b5563",padding:60}}>暂无匹配演员</div>
             :filtered.map(a=><ActorCard key={a.id} actor={a} onClick={setSelected}/>)
           }
         </div>
         {selected&&(
-          <div style={{width:300,minWidth:280,borderLeft:"1px solid #1e2535",background:"#0a1020",position:"sticky",top:0,maxHeight:"100vh",overflowY:"auto",flexShrink:0}}>
+          <div style={{width:300,position:"fixed",top:0,right:0,height:"100vh",borderLeft:"1px solid #1e2535",background:"#0a1020",overflowY:"auto",zIndex:50}}>
             <DetailDrawer
               actor={selected}
               onClose={()=>{setSelected(null);setAiStatus("");}}
