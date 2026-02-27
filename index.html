@@ -4,13 +4,36 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Actor Database</title>
+    <style>
+        .cardImg {
+            object-fit: contain;
+            padding: 4;
+        }
+        .image-container {
+            background: #1a2233;
+            object-fit: contain;
+        }
+        /* Other styles as needed */
+    </style>
 </head>
 <body>
-    <h1>Actor Database</h1>
-    <div id="actor-container">
-        <!-- Example image tags updated to use object-fit: contain instead of cover -->
-        <img src="actor1.jpg" style="object-fit: contain;" alt="Actor 1">
-        <img src="actor2.jpg" style="object-fit: contain;" alt="Actor 2">
+    <div class="actor-cards">
+        <!-- Actor cards will be dynamically generated here -->
+    </div>
+    <div class="edit-panel">
+        <!-- Edit panel content -->
+    </div>
+    <div class="photo-panel">
+        <!-- Photo panel content -->
+    </div>
+    <div class="batch-import-modals">
+        <!-- Batch import modal content -->
+    </div>
+    <div class="batch-photo-modals">
+        <!-- Batch photo modal content -->
+    </div>
+    <div class="add-actor-modals">
+        <!-- Add actor modal content -->
     </div>
 </body>
 </html>
