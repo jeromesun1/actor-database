@@ -8,7 +8,6 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
-<script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
 <style>
   *{box-sizing:border-box;margin:0;padding:0}
   body{background:#080d14;color:#e2e8f0;font-family:'PingFang SC','Microsoft YaHei',sans-serif}
@@ -865,31 +864,18 @@ const AddActorModal=({onClose,onAdd})=>{
 // ══════════════════════════════════════════════════════════════════════════════
 //  演员卡片
 // ══════════════════════════════════════════════════════════════════════════════
-const ActorCard=({actor, onClick, selectable, checked, onCheck})=>{
+const ActorCard=({actor,onClick})=>{
   const [err,setErr]=useState(false);
-  useEffect(()=>setErr(false), [actor.photo]);
+ useEffect(()=>setErr(false), [actor.photo]); 
   return(
-    <div className="actor-card" onClick={()=>selectable ? onCheck(actor.id) : onClick(actor)}
-      style={{...S.card, ...(checked?{borderColor:"#3b82f6",boxShadow:"0 0 0 2px #3b82f640"}:{})}}>
+    <div className="actor-card" onClick={()=>onClick(actor)} style={S.card}>
       <div style={S.cardImgWrap}>
-        {!err&&actor.photo?<img src={actor.photo} alt={actor.name} style={S.cardImg} onError={()=>setErr(true)}/>
-          :<div style={{...S.cardImg,display:"flex",alignItems:"center",justifyContent:"center",background:"#1e2535",fontSize:36}}>{actor.gender==="female"?"👩":"👨"}</div>}
+        {!err&&actor.photo?<img src={actor.photo} alt={actor.name} style={S.cardImg} onError={()=>setErr(true)}/>:<div style={{...S.cardImg,display:"flex",alignItems:"center",justifyContent:"center",background:"#1e2535",fontSize:36}}>{actor.gender==="female"?"👩":"👨"}</div>}
         <div style={{...S.hotnessTag,background:HC(actor.hotness)}}>🔥 {actor.hotness}</div>
         {actor.region==="hmt"&&<div style={S.hmtTag}>港澳台</div>}
-        {/* 选择模式 checkbox */}
-        {selectable&&(
-          <div style={{position:"absolute",top:7,left:actor.region==="hmt"?46:7,width:20,height:20,borderRadius:5,
-            background:checked?"#3b82f6":"rgba(0,0,0,0.5)",border:`2px solid ${checked?"#3b82f6":"#6b7280"}`,
-            display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer",transition:"all .15s"}}>
-            {checked&&<span style={{color:"#fff",fontSize:13,lineHeight:1}}>✓</span>}
-          </div>
-        )}
       </div>
       <div style={S.cardBody}>
-        <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
-          <h3 style={S.cardName}>{actor.name}</h3>
-          <span style={S.genderBadge}>{actor.gender==="female"?"女":"男"} · {actor.age}岁</span>
-        </div>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}><h3 style={S.cardName}>{actor.name}</h3><span style={S.genderBadge}>{actor.gender==="female"?"女":"男"} · {actor.age}岁</span></div>
         {actor.currentWorks.length>0&&<div style={S.currentWork}><span style={S.liveTag}>在播</span>{actor.currentWorks[0]}</div>}
         <div style={S.worksList}>{actor.works.slice(0,3).map((w,i)=><span key={i} style={S.workChip}>{w}</span>)}</div>
       </div>
@@ -976,7 +962,8 @@ function App() {
   const [search,setSearch] = useState("");
   const [fGender,setFGender] = useState("all");
   const [fRegion,setFRegion] = useState("all");
-  const [fGen,setFGen]       = useState("all"); // 年代筛选：all/70s/80s/90s/00s
+  const [fYearInput,setFYearInput] = useState(""); // 用户输入，如 "1990-1995"
+  const [fYearRange,setFYearRange] = useState(null); // 解析后 {from, to} 或 null
   const [sortBy,setSortBy] = useState("hotness");
   const [selected,setSelected] = useState(null);
   const [showAdd,setShowAdd]   = useState(false);
@@ -984,9 +971,6 @@ function App() {
   const [showImport,setShowImport] = useState(false);
   const [aiLoading,setAiLoading] = useState(false);
   const [aiStatus,setAiStatus]   = useState("");
-  // 多选导出
-  const [selectMode,setSelectMode] = useState(false);
-  const [checkedIds,setCheckedIds] = useState(new Set());
 
   useEffect(()=>{ db.set("actor-db-v6",actors); },[actors]);
 
@@ -1008,78 +992,16 @@ function App() {
     setActors(p=>[...p,...newActors]);
   };
 
-  // 年代筛选：根据年龄推算出生年份（2025 - age = 出生年）
-  const genFilter = (a) => {
-    if (fGen === "all") return true;
-    const birthYear = 2025 - a.age;
-    if (fGen === "70s") return birthYear >= 1970 && birthYear <= 1979;
-    if (fGen === "80s") return birthYear >= 1980 && birthYear <= 1989;
-    if (fGen === "90s") return birthYear >= 1990 && birthYear <= 1999;
-    if (fGen === "00s") return birthYear >= 2000 && birthYear <= 2009;
-    if (fGen === "10s") return birthYear >= 2010 && birthYear <= 2019;
-    return true;
-  };
-
   const filtered = actors
     .filter(a=>a.name.includes(search)||a.works.some(w=>w.includes(search)))
     .filter(a=>fGender==="all"||a.gender===fGender)
     .filter(a=>fRegion==="all"||a.region===fRegion)
-    .filter(genFilter)
+    .filter(a=>{
+      if(!fYearRange) return true;
+      const birth = new Date().getFullYear() - a.age;
+      return birth >= fYearRange.from && birth <= fYearRange.to;
+    })
     .sort((a,b)=>sortBy==="hotness"?b.hotness-a.hotness:a.name.localeCompare(b.name,"zh"));
-
-  // 多选操作
-  const toggleCheck = (id) => setCheckedIds(prev => {
-    const n = new Set(prev);
-    n.has(id) ? n.delete(id) : n.add(id);
-    return n;
-  });
-  const toggleSelectAll = () => {
-    if (checkedIds.size === filtered.length) setCheckedIds(new Set());
-    else setCheckedIds(new Set(filtered.map(a=>a.id)));
-  };
-  const exitSelectMode = () => { setSelectMode(false); setCheckedIds(new Set()); };
-
-  // Excel 导出
-  const exportExcel = () => {
-    const toExport = selectMode && checkedIds.size > 0
-      ? actors.filter(a => checkedIds.has(a.id))
-      : filtered;
-    if (!toExport.length) { alert("没有可导出的演员"); return; }
-
-    const genLabel = (age) => {
-      const y = 2025 - age;
-      if (y >= 1970 && y <= 1979) return "70后";
-      if (y >= 1980 && y <= 1989) return "80后";
-      if (y >= 1990 && y <= 1999) return "90后";
-      if (y >= 2000 && y <= 2009) return "00后";
-      return "其他";
-    };
-
-    const rows = toExport.map(a => ({
-      "姓名":     a.name,
-      "性别":     a.gender === "female" ? "女" : "男",
-      "年龄":     a.age,
-      "出生年代": genLabel(a.age),
-      "地区":     a.region === "hmt" ? "港澳台" : "内地",
-      "热度":     a.hotness,
-      "代表作品": a.works.join("、"),
-      "当前在播": a.currentWorks.join("、") || "—",
-      "舆情评分": a.sentiment ? a.sentiment.score : "—",
-      "近期标签": a.sentiment ? a.sentiment.keywords.join(" ") : "—",
-      "数据更新": a.updatedAt,
-    }));
-
-    const ws = XLSX.utils.json_to_sheet(rows);
-    // 设置列宽
-    ws["!cols"] = [
-      {wch:10},{wch:6},{wch:6},{wch:8},{wch:8},{wch:6},
-      {wch:30},{wch:20},{wch:8},{wch:20},{wch:10}
-    ];
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, "演员数据");
-    const fname = `华语演员库_${new Date().toISOString().slice(0,10)}.xlsx`;
-    XLSX.writeFile(wb, fname);
-  };
 
   const refreshActor=async(actor)=>{
     setAiLoading(true);setAiStatus("");
@@ -1111,20 +1033,6 @@ function App() {
             <span style={{background:"#1e2535",color:"#6b7280",padding:"4px 10px",borderRadius:20,fontSize:11}}>{actors.length} 位演员</span>
             <button onClick={()=>setShowImport(true)} style={{...S.btnSecondary,borderColor:"#7c3aed50",color:"#c4b5fd"}}>📋 批量导入</button>
             <button onClick={()=>setShowBatch(true)} style={S.btnSecondary}>🌐 批量更新照片</button>
-            {!selectMode ? (
-              <button onClick={()=>{setSelectMode(true);setCheckedIds(new Set());}} style={{...S.btnSecondary,borderColor:"#34d39940",color:"#34d399"}}>☑ 选择导出</button>
-            ) : (
-              <>
-                <button onClick={toggleSelectAll} style={{...S.btnSecondary,fontSize:11}}>
-                  {checkedIds.size===filtered.length?"取消全选":"全选当前"}
-                </button>
-                <button onClick={exportExcel} disabled={checkedIds.size===0}
-                  style={{...S.btnPrimary,background:"linear-gradient(135deg,#059669,#34d399)",opacity:checkedIds.size===0?.5:1}}>
-                  📥 导出 {checkedIds.size > 0 ? checkedIds.size+"位" : ""} Excel
-                </button>
-                <button onClick={exitSelectMode} style={{...S.btnTiny,color:"#ff4d6d"}}>✕ 取消</button>
-              </>
-            )}
             <button onClick={()=>setShowAdd(true)} style={S.btnPrimary}>＋ 添加演员</button>
             <button onClick={()=>{db.set("actor-auth",null);setAuthed(false);}} style={{...S.btnTiny,fontSize:10}}>退出 (当前模型: {aiName})</button>
           </div>
@@ -1142,23 +1050,39 @@ function App() {
             <button key={v} onClick={()=>setFRegion(v)} style={{...S.filterBtn,...(fRegion===v?S.filterBtnActive:{})}}>{l}</button>
           ))}
           <div style={S.divider}/>
-          {[["all","年代"],["70s","70后"],["80s","80后"],["90s","90后"],["00s","00后"]].map(([v,l])=>(
-            <button key={v} onClick={()=>setFGen(v)} style={{...S.filterBtn,...(fGen===v?{...S.filterBtnActive,borderColor:"#f59e0b",color:"#fcd34d",background:"#2a1f00"}:{})}}>{l}</button>
-          ))}
-          <div style={S.divider}/>
           <select value={sortBy} onChange={e=>setSortBy(e.target.value)} style={{...S.filterBtn,cursor:"pointer"}}>
             <option value="hotness">热度排序</option>
             <option value="name">姓名排序</option>
           </select>
-          <span style={{marginLeft:"auto",color:"#374151",fontSize:11}}>{filtered.length} 位</span>
-          {!selectMode&&<button onClick={exportExcel} style={{...S.btnTiny,color:"#34d399",borderColor:"#34d39940",fontSize:10}}>📥 导出筛选结果</button>}
+          <div style={S.divider}/>
+          {/* 出生年代区间输入 */}
+          <div style={{position:"relative",display:"flex",alignItems:"center",gap:4}}>
+            <span style={{fontSize:11,color:"#6b7280",whiteSpace:"nowrap"}}>出生年</span>
+            <input
+              value={fYearInput}
+              onChange={e=>{
+                const v = e.target.value;
+                setFYearInput(v);
+                // 解析格式：1990-1995 或 1990 或清空
+                const trimmed = v.trim();
+                if(!trimmed){ setFYearRange(null); return; }
+                const single = trimmed.match(/^(\d{4})$/);
+                if(single){ setFYearRange({from:+single[1],to:+single[1]}); return; }
+                const range = trimmed.match(/^(\d{4})\s*[-–~]\s*(\d{4})$/);
+                if(range){ setFYearRange({from:Math.min(+range[1],+range[2]),to:Math.max(+range[1],+range[2])}); return; }
+                setFYearRange(null); // 格式不对时不筛选
+              }}
+              placeholder="如 1990-1995"
+              style={{...S.filterBtn,width:106,cursor:"text",padding:"3px 8px",
+                ...(fYearRange?{borderColor:"#f59e0b",color:"#fcd34d",background:"#1a1200"}:{})
+              }}
+            />
+            {fYearInput&&(
+              <button onClick={()=>{setFYearInput("");setFYearRange(null);}}
+                style={{position:"absolute",right:6,top:"50%",transform:"translateY(-50%)",background:"none",border:"none",color:"#4b5563",cursor:"pointer",fontSize:12,padding:0,lineHeight:1}}>✕</button>
+            )}
+          </div>
         </div>
-        {/* 选择模式提示条 */}
-        {selectMode&&<div style={{marginTop:8,padding:"6px 10px",background:"#0d1b2a",borderRadius:7,border:"1px solid #3b82f640",fontSize:11,color:"#60a5fa",display:"flex",alignItems:"center",gap:8}}>
-          <span>☑ 选择模式</span>
-          <span style={{color:"#e2e8f0",fontWeight:600}}>已选 {checkedIds.size} 位</span>
-          <span style={{color:"#374151"}}>· 点击卡片选中/取消 · 导出后将生成 xlsx 文件</span>
-        </div>}
       </div>
 
       {aiStatus&&<div style={{textAlign:"center",padding:"4px",color:aiStatus.includes("✅")?"#34c759":"#ff9500",fontSize:12}}>{aiStatus}</div>}
@@ -1167,14 +1091,7 @@ function App() {
         <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(178px,1fr))",gap:12,flex:1,overflowY:"auto",padding:16,alignContent:"start"}}>
           {filtered.length===0
             ?<div style={{gridColumn:"1/-1",textAlign:"center",color:"#4b5563",padding:60}}>暂无匹配演员</div>
-            :filtered.map(a=>(
-              <ActorCard key={a.id} actor={a}
-                onClick={setSelected}
-                selectable={selectMode}
-                checked={checkedIds.has(a.id)}
-                onCheck={toggleCheck}
-              />
-            ))
+            :filtered.map(a=><ActorCard key={a.id} actor={a} onClick={setSelected}/>)
           }
         </div>
         {selected&&(
