@@ -73,6 +73,16 @@ const _T2S={"後":"后","個":"个","這":"这","國":"国","來":"来","時":"�
 "曉":"晓","純":"纯","瀾":"澜","燁":"烨","錦":"锦","瑋":"玮","鈞":"钧","瑩":"莹","驍":"骁","鴻":"鸿","軒":"轩","暉":"晖","頡":"颉","瑤":"瑶","鋒":"锋","濤":"涛","澤":"泽","崢":"峥","騰":"腾","馳":"驰","盪":"荡","飄":"飘","嘉":"嘉","繁":"繁","繪":"绘","務":"务","覺":"觉","圍":"围","類":"类","幹":"干","響":"响","讀":"读"};
 function toSimplified(s){if(!s)return s;return s.split("").map(c=>_T2S[c]||c).join("");}
 
+// 演员作品类型标签
+const WORK_TAGS = ["院线电影","网络电影","长剧","中剧","短剧"];
+const TAG_STYLE = {
+  "院线电影": {background:"#1a1035",border:"1px solid #7c3aed60",color:"#c4b5fd"},
+  "网络电影": {background:"#0d1b3e",border:"1px solid #3b82f660",color:"#93c5fd"},
+  "长剧":     {background:"#0d2e1e",border:"1px solid #34d39950",color:"#6ee7b7"},
+  "中剧":     {background:"#1a1e0d",border:"1px solid #84cc1650",color:"#bef264"},
+  "短剧":     {background:"#2a1500",border:"1px solid #f59e0b50",color:"#fbbf24"},
+};
+
 // 判断演员是否有真实可用的形象照片
 function hasValidPhoto(photo) {
   if (!photo) return false;
@@ -234,6 +244,7 @@ async function fetchActorInfo(name) {
     : "给出你已知的该演员在 Wikimedia Commons 或豆瓣上的图片直链URL";
   return await fetchAIJson(`请搜索中国演员"${name}"的详细信息，包括：性别、年龄、所属地区（内地/港澳台）、代表作品（最多5部）、当前在播影视（若无则空数组）、当前热度（0-100整数）、以及一张形象照片URL（${photoNote}）。
 如果是港澳台演员，还需要舆情信息（综合评分0-100，正面/中性/负面百分比，热点标签3-5个，近期事件2-3条）。
+另外根据该演员的主要作品类型，从以下选项中选择1-3个最符合的标签：院线电影、网络电影、长剧、中剧、短剧。
 
 只返回JSON，不要任何其他文字：
 {
@@ -245,6 +256,7 @@ async function fetchActorInfo(name) {
   "works": ["代表作1","代表作2","代表作3"],
   "currentWorks": ["在播作品1"],
   "hotness": <整数0-100>,
+  "tags": ["院线电影","长剧"],
   "sentiment": null或{"score":<整数>,"positive":<整数>,"neutral":<整数>,"negative":<整数>,"keywords":["标签1","标签2"],"recentEvents":["事件1","事件2"]}
 }`, useSearch);
 }
@@ -638,6 +650,7 @@ function BatchImportModal({existingNames, onClose, onImport}) {
           currentWorks: Array.isArray(info.currentWorks)?info.currentWorks:[],
           hotness:      Number(info.hotness)||60,
           updatedAt:    new Date().toISOString().slice(0,7),
+          tags:         Array.isArray(info.tags)?info.tags.filter(t=>WORK_TAGS.includes(t)):[],
           sentiment:    info.region==="hmt"&&info.sentiment?info.sentiment:null,
         };
         results.push(actor);
@@ -813,6 +826,7 @@ function CastImportModal({existingNames, onClose, onImport}) {
           currentWorks: Array.isArray(info.currentWorks)?info.currentWorks:[],
           hotness:      Number(info.hotness)||60,
           updatedAt:    new Date().toISOString().slice(0,7),
+          tags:         Array.isArray(info.tags)?info.tags.filter(t=>WORK_TAGS.includes(t)):[],
           sentiment:    info.region==="hmt"&&info.sentiment?info.sentiment:null,
         };
         results.push(actor);
@@ -994,6 +1008,7 @@ function EditPanel({actor, onSave, onCancel, onDelete}) {
     works:         actor.works.join("，"),
     currentWorks:  actor.currentWorks.join("，"),
     hotness:       String(actor.hotness),
+    tags:          Array.isArray(actor.tags)?actor.tags:[],
     sentScore:     String(actor.sentiment?.score||80),
     sentPos:       String(actor.sentiment?.positive||80),
     sentNeu:       String(actor.sentiment?.neutral||15),
@@ -1005,6 +1020,7 @@ function EditPanel({actor, onSave, onCancel, onDelete}) {
   const [photoStatus,setPhotoStatus]=useState("");
   const [confirmDel,setConfirmDel]=useState(false);
   const set=(k,v)=>setForm(f=>({...f,[k]:v}));
+  const toggleTag=t=>set("tags",form.tags.includes(t)?form.tags.filter(x=>x!==t):[...form.tags,t]);
 
   const autoPhoto=async()=>{
     setPhotoLoading(true);setPhotoStatus("🔍 搜索中...");
@@ -1026,6 +1042,7 @@ function EditPanel({actor, onSave, onCancel, onDelete}) {
       works:        parseList(form.works),
       currentWorks: parseList(form.currentWorks),
       hotness:      Math.min(100,Math.max(0,Number(form.hotness)||0)),
+      tags:         form.tags,
       updatedAt:    new Date().toISOString().slice(0,7),
       sentiment: isHmt ? {
         score:        Number(form.sentScore)||80,
@@ -1095,6 +1112,19 @@ function EditPanel({actor, onSave, onCancel, onDelete}) {
       <div style={S.field}>
         <label style={S.label}>当年在播 <span style={{color:"#374151",fontWeight:400}}>逗号分隔，无则留空</span></label>
         <input value={form.currentWorks} onChange={e=>set("currentWorks",e.target.value)} style={S.input}/>
+      </div>
+
+      <div style={S.field}>
+        <label style={S.label}>作品类型标签 <span style={{color:"#374151",fontWeight:400}}>可多选</span></label>
+        <div style={{display:"flex",gap:6,flexWrap:"wrap",marginTop:4}}>
+          {WORK_TAGS.map(t=>(
+            <button key={t} onClick={()=>toggleTag(t)}
+              style={{padding:"4px 10px",borderRadius:6,fontSize:11,cursor:"pointer",transition:"all .15s",
+                ...(form.tags.includes(t)?TAG_STYLE[t]:{background:"#111827",border:"1px solid #1e2535",color:"#6b7280"})}}>
+              {t}
+            </button>
+          ))}
+        </div>
       </div>
 
       {form.region==="hmt"&&(
@@ -1412,10 +1442,11 @@ const BatchPhotoModal=({actors,onClose,onUpdate})=>{
 //  添加演员 Modal
 // ══════════════════════════════════════════════════════════════════════════════
 const AddActorModal=({onClose,onAdd})=>{
-  const [form,setForm]=useState({name:"",gender:"male",age:"",region:"mainland",photo:"",works:"",currentWorks:"",hotness:70,sentimentScore:80});
+  const [form,setForm]=useState({name:"",gender:"male",age:"",region:"mainland",photo:"",works:"",currentWorks:"",hotness:70,sentimentScore:80,tags:[]});
   const [photoLoading,setPhotoLoading]=useState(false);
   const [photoStatus,setPhotoStatus]=useState("");
   const set=(k,v)=>setForm(f=>({...f,[k]:v}));
+  const toggleTag=t=>set("tags",form.tags.includes(t)?form.tags.filter(x=>x!==t):[...form.tags,t]);
   
   const autoPhoto=async()=>{
     if(!form.name.trim()){setPhotoStatus("❗ 请先填写姓名");return;}
@@ -1426,7 +1457,7 @@ const AddActorModal=({onClose,onAdd})=>{
   };
   const submit=()=>{
     if(!form.name.trim())return;
-    onAdd({id:Date.now(),name:toSimplified(form.name.trim()),gender:form.gender,age:Number(form.age)||0,region:form.region,photo:form.photo||`https://i.pravatar.cc/300?img=${Math.floor(Math.random()*70)+1}`,works:parseList(form.works),currentWorks:parseList(form.currentWorks),hotness:Number(form.hotness),updatedAt:new Date().toISOString().slice(0,7),sentiment:form.region==="hmt"?{score:Number(form.sentimentScore),positive:Number(form.sentimentScore),neutral:Math.max(0,100-Number(form.sentimentScore)-5),negative:5,keywords:[],recentEvents:[]}:null});
+    onAdd({id:Date.now(),name:toSimplified(form.name.trim()),gender:form.gender,age:Number(form.age)||0,region:form.region,photo:form.photo||`https://i.pravatar.cc/300?img=${Math.floor(Math.random()*70)+1}`,works:parseList(form.works),currentWorks:parseList(form.currentWorks),hotness:Number(form.hotness),tags:form.tags,updatedAt:new Date().toISOString().slice(0,7),sentiment:form.region==="hmt"?{score:Number(form.sentimentScore),positive:Number(form.sentimentScore),neutral:Math.max(0,100-Number(form.sentimentScore)-5),negative:5,keywords:[],recentEvents:[]}:null});
     onClose();
   };
   return(
@@ -1438,6 +1469,14 @@ const AddActorModal=({onClose,onAdd})=>{
           <div style={S.field}><label style={S.label}>性别</label><select value={form.gender} onChange={e=>set("gender",e.target.value)} style={S.input}><option value="male">男</option><option value="female">女</option></select></div>
           <div style={S.field}><label style={S.label}>地区</label><select value={form.region} onChange={e=>set("region",e.target.value)} style={S.input}><option value="mainland">内地</option><option value="hmt">港澳台</option></select></div>
           {form.region==="hmt"&&<div style={S.field}><label style={S.label}>舆情评分</label><input type="number" value={form.sentimentScore} onChange={e=>set("sentimentScore",e.target.value)} style={S.input}/></div>}
+        </div>
+        <div style={S.field}>
+          <label style={S.label}>作品类型标签 <span style={{color:"#374151",fontWeight:400}}>可多选</span></label>
+          <div style={{display:"flex",gap:6,flexWrap:"wrap",marginTop:4}}>
+            {WORK_TAGS.map(t=>(
+              <button key={t} onClick={()=>toggleTag(t)} style={{...S.btnTiny,padding:"4px 10px",...(form.tags.includes(t)?TAG_STYLE[t]:{})}}>{t}</button>
+            ))}
+          </div>
         </div>
         <div style={S.field}>
           <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:5}}><label style={S.label}>形象照片</label><button onClick={autoPhoto} disabled={photoLoading} style={{...S.btnTinyPrimary,opacity:photoLoading?.6:1}}>{photoLoading?"搜索中...":"🌐 自动匹配"}</button></div>
@@ -1469,6 +1508,9 @@ const ActorCard=({actor,onClick})=>{
       <div style={S.cardBody}>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}><h3 style={S.cardName}>{actor.name}</h3><span style={S.genderBadge}>{actor.gender==="female"?"女":"男"} · {actor.age}岁</span></div>
         {actor.currentWorks.length>0&&<div style={S.currentWork}><span style={S.liveTag}>在播</span>{actor.currentWorks[0]}</div>}
+        {actor.tags?.length>0&&<div style={{display:"flex",flexWrap:"wrap",gap:3,marginBottom:4}}>
+          {actor.tags.map(t=><span key={t} style={{...TAG_STYLE[t],padding:"1px 6px",borderRadius:4,fontSize:9,fontWeight:600}}>{t}</span>)}
+        </div>}
         <div style={S.worksList}>{actor.works.slice(0,3).map((w,i)=><span key={i} style={S.workChip}>{w}</span>)}</div>
       </div>
     </div>
@@ -1510,6 +1552,15 @@ const DetailDrawer=({actor,onClose,onRefresh,onPhotoUpdate,onSave,onDelete,loadi
         ))}
         <div style={S.detailItem}><span style={S.detailLabel}>热度</span><span style={{...S.detailVal,color:HC(actor.hotness),fontWeight:700}}>🔥 {actor.hotness}</span></div>
       </div>
+
+      {actor.tags?.length>0&&(
+        <div style={{marginBottom:12}}>
+          <h4 style={S.sectionTitle}>作品类型</h4>
+          <div style={{display:"flex",flexWrap:"wrap",gap:5}}>
+            {actor.tags.map(t=><span key={t} style={{...TAG_STYLE[t],padding:"3px 10px",borderRadius:6,fontSize:11,fontWeight:600}}>{t}</span>)}
+          </div>
+        </div>
+      )}
 
       <div style={{marginBottom:12}}>
         <h4 style={S.sectionTitle}>代表作品</h4>
@@ -1560,6 +1611,7 @@ function App() {
   const [search,setSearch] = useState("");
   const [fGender,setFGender] = useState("all");
   const [fRegion,setFRegion] = useState("all");
+  const [fTag,setFTag]       = useState("all");
   const [fYearInput,setFYearInput] = useState(""); // 用户输入，如 "1990-1995"
   const [fYearRange,setFYearRange] = useState(null); // 解析后 {from, to} 或 null
   const [sortBy,setSortBy] = useState("hotness");
@@ -1604,6 +1656,7 @@ function App() {
     .filter(a=>{const q=toSimplified(search);const n=toSimplified(a.name);return !q||n.includes(q)||a.works.some(w=>toSimplified(w).includes(q));})
     .filter(a=>fGender==="all"||a.gender===fGender)
     .filter(a=>fRegion==="all"||a.region===fRegion)
+    .filter(a=>fTag==="all"||(Array.isArray(a.tags)&&a.tags.includes(fTag)))
     .filter(a=>{
       if(!fYearRange) return true;
       const birth = new Date().getFullYear() - a.age;
@@ -1665,6 +1718,17 @@ function App() {
             <option value="hotness">热度排序</option>
             <option value="name">姓名排序</option>
           </select>
+        </div>
+        {/* 作品类型筛选行 */}
+        <div style={{display:"flex",gap:5,flexWrap:"wrap",alignItems:"center",marginTop:6}}>
+          <span style={{fontSize:10,color:"#4b5563",whiteSpace:"nowrap"}}>类型</span>
+          <button onClick={()=>setFTag("all")} style={{...S.filterBtn,...(fTag==="all"?S.filterBtnActive:{})}}>全部</button>
+          {WORK_TAGS.map(t=>(
+            <button key={t} onClick={()=>setFTag(t===fTag?"all":t)}
+              style={{...S.filterBtn,...(fTag===t?TAG_STYLE[t]:{})}}>
+              {t}
+            </button>
+          ))}
           <div style={S.divider}/>
           {/* 出生年代区间输入 */}
           <div style={{position:"relative",display:"flex",alignItems:"center",gap:4}}>
@@ -1674,14 +1738,13 @@ function App() {
               onChange={e=>{
                 const v = e.target.value;
                 setFYearInput(v);
-                // 解析格式：1990-1995 或 1990 或清空
                 const trimmed = v.trim();
                 if(!trimmed){ setFYearRange(null); return; }
                 const single = trimmed.match(/^(\d{4})$/);
                 if(single){ setFYearRange({from:+single[1],to:+single[1]}); return; }
                 const range = trimmed.match(/^(\d{4})\s*[-–~]\s*(\d{4})$/);
                 if(range){ setFYearRange({from:Math.min(+range[1],+range[2]),to:Math.max(+range[1],+range[2])}); return; }
-                setFYearRange(null); // 格式不对时不筛选
+                setFYearRange(null);
               }}
               placeholder="如 1990-1995"
               style={{...S.filterBtn,width:106,cursor:"text",padding:"3px 8px",
