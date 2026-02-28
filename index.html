@@ -1257,15 +1257,57 @@ const PhotoPanel=({actor,onPhotoUpdate})=>{
 //  批量更新照片 Modal
 // ══════════════════════════════════════════════════════════════════════════════
 const BatchPhotoModal=({actors,onClose,onUpdate})=>{
-  // 只把没有照片的演员加入队列（photo 为空或为默认占位）
-  const noPhotoActors = actors.filter(a => !hasValidPhoto(a.photo));
-  const skippedCount  = actors.length - noPhotoActors.length;
-  const [queue,setQueue]=useState(noPhotoActors.map(a=>({id:a.id,name:a.name,gender:a.gender,cur:a.photo,newPhoto:null,source:"",status:"pending"})));
-  const [running,setRunning]=useState(false);
-  const [curIdx,setCurIdx]=useState(-1);
-  const [done,setDone]=useState(false);
-  const [mode,setMode]=useState("free"); // "free"(wiki+baidu) | "ai"
+  const [checking,setChecking] = useState(true);   // 初始检测阶段
+  const [queue,setQueue]       = useState([]);
+  const [skippedCount,setSkippedCount] = useState(0);
+  const [running,setRunning]   = useState(false);
+  const [curIdx,setCurIdx]     = useState(-1);
+  const [done,setDone]         = useState(false);
+  const [mode,setMode]         = useState("free");
   const aiName = db.get("actor-provider")?.toUpperCase() || 'AI';
+
+  // 打开时：先快速验证每个"有URL"的演员图片是否真的能加载
+  useEffect(()=>{
+    let cancelled = false;
+    (async()=>{
+      const needCheck   = [];
+      const defNoPhoto  = [];
+
+      for(const a of actors){
+        if(!hasValidPhoto(a.photo)){
+          defNoPhoto.push(a);   // 格式上就无效，直接加入
+        } else {
+          needCheck.push(a);    // 有URL，需要验证
+        }
+      }
+
+      // 并发验证（最多同时20个，超时3秒视为失败）
+      const BATCH = 20;
+      const failed = [];
+      for(let i=0;i<needCheck.length;i+=BATCH){
+        if(cancelled) return;
+        const batch = needCheck.slice(i, i+BATCH);
+        const results = await Promise.all(batch.map(a=>
+          new Promise(res=>{
+            const img = new Image();
+            img.referrerPolicy = "no-referrer";
+            img.onload  = ()=>res(false);   // 加载成功 → 不需要更新
+            img.onerror = ()=>res(true);    // 加载失败 → 需要更新
+            img.src = a.photo;
+            setTimeout(()=>res(true), 3000); // 超时也视为失败
+          }).then(isFailed => ({actor:a, isFailed}))
+        ));
+        results.forEach(({actor,isFailed})=>{ if(isFailed) failed.push(actor); });
+      }
+
+      if(cancelled) return;
+      const allNeedUpdate = [...defNoPhoto, ...failed];
+      setQueue(allNeedUpdate.map(a=>({id:a.id,name:a.name,gender:a.gender,cur:a.photo,newPhoto:null,source:"",status:"pending"})));
+      setSkippedCount(actors.length - allNeedUpdate.length);
+      setChecking(false);
+    })();
+    return ()=>{ cancelled=true; };
+  }, []);  // eslint-disable-line
 
   const runAll=async()=>{
     setRunning(true);setDone(false);setQueue(q=>q.map(a=>({...a,newPhoto:null,source:"",status:"pending"})));
@@ -1299,16 +1341,22 @@ const BatchPhotoModal=({actors,onClose,onUpdate})=>{
           <button onClick={onClose} disabled={running} style={S.closeBtn}>✕</button>
         </div>
 
-        {/* 跳过提示 */}
-        {skippedCount>0&&<div style={{marginBottom:10,padding:"6px 10px",background:"#0d2010",border:"1px solid #34d39930",borderRadius:7,fontSize:11,color:"#6ee7b7"}}>
-          ✅ 已跳过 {skippedCount} 位有照片的演员，仅处理 {queue.length} 位无照片演员
+        {/* 检测中 */}
+        {checking&&<div style={{textAlign:"center",padding:"30px 0"}}>
+          <div style={{color:"#60a5fa",fontSize:13,marginBottom:10,animation:"pulse 1.2s infinite"}}>◐ 正在检测 {actors.length} 位演员的照片可访问性...</div>
+          <div style={{fontSize:11,color:"#4b5563"}}>验证图片是否可正常加载，请稍候</div>
         </div>}
-        {queue.length===0&&<div style={{textAlign:"center",padding:"30px 0",color:"#4b5563",fontSize:13}}>
-          🎉 所有演员都已有形象照片，无需批量更新
+
+        {/* 跳过提示 */}
+        {!checking&&skippedCount>0&&<div style={{marginBottom:10,padding:"6px 10px",background:"#0d2010",border:"1px solid #34d39930",borderRadius:7,fontSize:11,color:"#6ee7b7"}}>
+          ✅ 已跳过 {skippedCount} 位照片正常的演员，仅处理 {queue.length} 位
+        </div>}
+        {!checking&&queue.length===0&&<div style={{textAlign:"center",padding:"30px 0",color:"#4b5563",fontSize:13}}>
+          🎉 所有演员照片均可正常加载，无需批量更新
         </div>}
 
         {/* 模式切换 */}
-        {!running&&!done&&queue.length>0&&<div style={{display:"flex",gap:8,marginBottom:13}}>
+        {!checking&&!running&&!done&&queue.length>0&&<div style={{display:"flex",gap:8,marginBottom:13}}>
           <button onClick={()=>setMode("free")} style={{...S.filterBtn,flex:1,padding:"8px 0",fontSize:12,...(mode==="free"?{background:"#0d2e1e",border:"1px solid #34d399",color:"#34d399"}:{})}}>
             📖 Wiki + 🔴 百度<div style={{fontSize:10,color:mode==="free"?"#6ee7b7":"#4b5563",marginTop:2}}>免费·无需Key·约{queue.length*1.5}秒</div>
           </button>
@@ -1348,7 +1396,7 @@ const BatchPhotoModal=({actors,onClose,onUpdate})=>{
         </div>
         <div style={{display:"flex",gap:8,justifyContent:"flex-end"}}>
           <button onClick={onClose} disabled={running} style={S.btnSecondary}>关闭</button>
-          {!running&&!done&&queue.length>0&&<button onClick={runAll} style={{...S.btnPrimary,background:mode==="free"?"linear-gradient(135deg,#059669,#f59e0b)":undefined}}>🚀 开始{mode==="free"?"免费查图":"AI搜索"}</button>}
+          {!checking&&!running&&!done&&queue.length>0&&<button onClick={runAll} style={{...S.btnPrimary,background:mode==="free"?"linear-gradient(135deg,#059669,#f59e0b)":undefined}}>🚀 开始{mode==="free"?"免费查图":"AI搜索"}</button>}
           {!running&&done&&<>
             <button onClick={()=>{setDone(false);setQueue(q=>q.map(a=>({...a,newPhoto:null,source:"",status:"pending"})));}} style={S.btnSecondary}>🔄 重新查</button>
             {doneCount>0&&<button onClick={applyAll} style={S.btnPrimary}>✅ 应用 {doneCount} 张</button>}
