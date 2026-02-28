@@ -196,238 +196,270 @@ async function fetchActorInfo(name) {
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
-//  按影视作品抓取演员表（Wikipedia 中英文 + 百度百科 + AI 兜底）
-// ══════════════════════════════════════════════════════════════════════════════
-
-// 策略1: 中文维基百科 - 解析词条中的演员表
-async function fetchCastFromZhWiki(title) {
-  try {
-    // 搜索词条
-    const sr = await fetch(
-      `https://zh.wikipedia.org/w/api.php?action=query&list=search&srsearch=${encodeURIComponent(title)}&srlimit=3&format=json&origin=*`
-    ).then(r=>r.json());
-    const pageTitle = sr?.query?.search?.[0]?.title;
-    if(!pageTitle) return null;
-
-    // 获取页面原始 wikitext
-    const wt = await fetch(
-      `https://zh.wikipedia.org/w/api.php?action=query&titles=${encodeURIComponent(pageTitle)}&prop=revisions&rvprop=content&format=json&origin=*`
-    ).then(r=>r.json());
-    const pages = wt?.query?.pages||{};
-    const content = Object.values(pages)[0]?.revisions?.[0]?.["*"]||"";
-    if(!content) return null;
-
-    // 从 wikitext 中提取演员名字（多种格式）
-    const names = new Set();
-    // 格式1: | 演员名 || 角色名
-    const re1 = /\|\s*\[\[([^\]|#]+)(?:\|[^\]]+)?\]\]\s*\|\|/g;
-    let m;
-    while((m=re1.exec(content))!==null) {
-      const n = m[1].trim();
-      if(n.length>=2&&n.length<=8&&!/[a-zA-Z:\/]/.test(n)) names.add(n);
-    }
-    // 格式2: [[人名]] 直接列表
-    const re2 = /\[\[([^\]|#]{2,8})\]\]/g;
-    while((m=re2.exec(content))!==null) {
-      const n = m[1].trim();
-      if(/^[\u4e00-\u9fa5]{2,5}$/.test(n)) names.add(n);
-    }
-    // 格式3: 演员＝ 或 主演＝
-    const castBlock = content.match(/(?:演员|主演|cast)\s*[=＝]\s*([^|\n}{]{3,120})/gi)||[];
-    castBlock.forEach(block=>{
-      const parts = block.split(/[,，、\n]+/);
-      parts.forEach(p=>{
-        const clean = p.replace(/.*[=＝]\s*/,"").replace(/\[\[|\]\]/g,"").trim();
-        if(/^[\u4e00-\u9fa5]{2,5}$/.test(clean)) names.add(clean);
-      });
-    });
-
-    const result = [...names].slice(0,12);
-    return result.length>=2 ? { names: result, source:"中文维基百科", pageTitle } : null;
-  } catch { return null; }
-}
-
-// 策略2: 英文维基百科
-async function fetchCastFromEnWiki(title) {
-  try {
-    const sr = await fetch(
-      `https://en.wikipedia.org/w/api.php?action=query&list=search&srsearch=${encodeURIComponent(title+" film")}&srlimit=3&format=json&origin=*`
-    ).then(r=>r.json());
-    const pageTitle = sr?.query?.search?.[0]?.title;
-    if(!pageTitle) return null;
-
-    const wt = await fetch(
-      `https://en.wikipedia.org/w/api.php?action=query&titles=${encodeURIComponent(pageTitle)}&prop=revisions&rvprop=content&format=json&origin=*`
-    ).then(r=>r.json());
-    const pages = wt?.query?.pages||{};
-    const content = Object.values(pages)[0]?.revisions?.[0]?.["*"]||"";
-
-    // 从 Cast 区段提取 [[演员名]]
-    const castSection = content.match(/==\s*[Cc]ast\s*==[\s\S]{0,3000}/)?.[0]||content;
-    const names = new Set();
-    const re = /\[\[([^\]|#]+)(?:\|([^\]]+))?\]\]/g;
-    let m;
-    while((m=re.exec(castSection))!==null) {
-      // 优先中文名（alias），否则英文名
-      const alias = m[2]?.trim();
-      const main  = m[1]?.trim();
-      const name  = alias||main;
-      if(name && name.length<=40 && !/[:#\d]/.test(name)) names.add(name);
-    }
-    const result = [...names].slice(0,12);
-    return result.length>=2 ? { names: result, source:"英文维基百科", pageTitle } : null;
-  } catch { return null; }
-}
-
-// 策略3: AI 兜底（从训练知识中回答）
-async function fetchCastFromAI(title, year) {
-  const yearStr = year ? `（${year}年）` : "";
-  const prompt = `影视作品"${title}"${yearStr}的主要演员阵容（前10位），只返回JSON不要其他文字：{"cast":["演员1","演员2","演员3",...],"source":"AI训练数据"}`;
-  try {
-    const provider = db.get("actor-provider")||"claude";
-    const useSearch = provider==="claude";
-    const result = await fetchAIJson(prompt, useSearch);
-    if(Array.isArray(result?.cast)&&result.cast.length>0) {
-      return { names: result.cast.slice(0,10), source: result.source||"AI" };
-    }
-    return null;
-  } catch { return null; }
-}
-
-// 总入口：依次尝试各渠道
-async function fetchCastFromWork(title, year) {
-  const queries = year ? [`${title} (${year}年电影)`, `${title} ${year}`, title] : [title];
-
-  // 1. 中文维基
-  for(const q of queries) {
-    const r = await fetchCastFromZhWiki(q);
-    if(r?.names?.length>=2) return r;
-  }
-  // 2. 英文维基
-  for(const q of queries) {
-    const r = await fetchCastFromEnWiki(q);
-    if(r?.names?.length>=2) return r;
-  }
-  // 3. AI 兜底
-  const r = await fetchCastFromAI(title, year);
-  if(r?.names?.length>=1) return r;
-
-  return null;
-}
+//  登录页（仅密码）
 // ══════════════════════════════════════════════════════════════════════════════
 function LoginPage({onLogin}) {
-  const [pwd,setPwd]         = useState("");
-  const [provider,setProvider] = useState(()=>db.get("actor-provider")||"claude");
-  const [apiKey,setApiKey]   = useState(()=>db.get(`actor-api-key-${provider}`)||"");
-  const [showKey,setShowKey] = useState(false);
-  const [err,setErr]         = useState("");
-  const [testing,setTesting] = useState(false);
-  const [shake,setShake]     = useState(false);
-
+  const [pwd,setPwd]     = useState("");
+  const [err,setErr]     = useState("");
+  const [shake,setShake] = useState(false);
   const doShake = () => { setShake(true); setTimeout(()=>setShake(false),500); };
-
-  const handleProviderChange = (p) => {
-    setProvider(p);
-    setApiKey(db.get(`actor-api-key-${p}`) || "");
-    setErr("");
+  const submit = () => {
+    if (pwd === ACCESS_PWD) { db.set("actor-auth", ACCESS_PWD); onLogin(); }
+    else { setErr("密码错误，请重试"); doShake(); setTimeout(()=>setErr(""), 2500); }
   };
-
-  const submit = async () => {
-    if (pwd !== ACCESS_PWD) { setErr("访问密码错误"); doShake(); return; }
-    if (!apiKey.trim()) { setErr("请填写 API Key"); doShake(); return; }
-    
-    // 基础格式校验
-    if (provider === "claude" && !apiKey.startsWith("sk-ant-")) { setErr("Claude Key 应以 sk-ant- 开头"); doShake(); return; }
-    if (provider === "gemini" && !apiKey.startsWith("AIza")) { setErr("Gemini Key 应以 AIza 开头"); doShake(); return; }
-    if (provider === "deepseek" && !apiKey.startsWith("sk-")) { setErr("DeepSeek Key 应以 sk- 开头"); doShake(); return; }
-
-    setTesting(true); setErr("");
-    try {
-      let testUrl, testBody, testHeaders;
-      if (provider === "claude") {
-         testUrl = "https://api.anthropic.com/v1/messages";
-         testHeaders = {"Content-Type":"application/json","x-api-key":apiKey,"anthropic-version":"2023-06-01","anthropic-dangerous-direct-browser-access":"true"};
-         testBody = JSON.stringify({model:"claude-3-5-sonnet-20241022",max_tokens:5,messages:[{role:"user",content:"hi"}]});
-      } else if (provider === "gemini") {
-         testUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`;
-         testHeaders = {"Content-Type":"application/json"};
-         testBody = JSON.stringify({contents: [{parts: [{text: "hi"}]}]});
-      } else if (provider === "deepseek") {
-         testUrl = "https://api.deepseek.com/chat/completions";
-         testHeaders = {"Content-Type":"application/json","Authorization":`Bearer ${apiKey}`};
-         testBody = JSON.stringify({model:"deepseek-chat",messages:[{role:"user",content:"hi"}]});
-      }
-
-      const res = await fetch(testUrl, { method:"POST", headers:testHeaders, body:testBody });
-      if(!res.ok){ const e=await res.json().catch(()=>({})); throw new Error(e.error?.message||`HTTP ${res.status}`); }
-      
-      // 保存设置
-      db.set("actor-provider", provider);
-      db.set(`actor-api-key-${provider}`, apiKey.trim());
-      db.set("actor-auth", ACCESS_PWD);
-      onLogin();
-    } catch(e) {
-      setErr("API Key 验证失败：" + e.message);
-      doShake();
-    } finally { setTesting(false); }
-  };
-
-  const ph = provider==="claude" ? "sk-ant-..." : provider==="gemini" ? "AIza..." : "sk-...";
-
   return(
     <div style={{minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center",background:"radial-gradient(ellipse at 60% 40%,#0d1b3e 0%,#080d14 70%)",padding:20}}>
-      <div style={{width:"100%",maxWidth:420,padding:36,background:"#0d1521",border:"1px solid #1e2535",borderRadius:20,animation:shake?"shake .4s ease":"fadeIn .5s ease"}}>
-        {/* Logo */}
-        <div style={{textAlign:"center",marginBottom:28}}>
-          <div style={{fontSize:52,marginBottom:12,filter:"drop-shadow(0 0 20px #3b82f680)"}}>🎬</div>
-          <h1 style={{fontSize:22,fontWeight:800,background:"linear-gradient(135deg,#e2e8f0,#93c5fd)",WebkitBackgroundClip:"text",WebkitTextFillColor:"transparent",marginBottom:5}}>华语演员库</h1>
-          <p style={{color:"#374151",fontSize:11,letterSpacing:2}}>CHINESE ACTOR DATABASE</p>
+      <div style={{width:"100%",maxWidth:360,padding:40,background:"#0d1521",border:"1px solid #1e2535",borderRadius:20,animation:shake?"shake .4s ease":"fadeIn .5s ease"}}>
+        <div style={{textAlign:"center",marginBottom:32}}>
+          <div style={{fontSize:56,marginBottom:12,filter:"drop-shadow(0 0 24px #3b82f680)"}}>🎬</div>
+          <h1 style={{fontSize:22,fontWeight:800,background:"linear-gradient(135deg,#e2e8f0,#93c5fd)",WebkitBackgroundClip:"text",WebkitTextFillColor:"transparent",margin:"0 0 6px"}}>华语演员库</h1>
+          <p style={{color:"#374151",fontSize:11,letterSpacing:2,margin:0}}>CHINESE ACTOR DATABASE</p>
+        </div>
+        <input
+          type="password" value={pwd}
+          onChange={e=>{setPwd(e.target.value);setErr("");}}
+          onKeyDown={e=>e.key==="Enter"&&submit()}
+          placeholder="请输入访问密码"
+          autoFocus
+          style={{width:"100%",padding:"13px 16px",background:"#111827",border:`1px solid ${err?"#ff4d6d40":"#1e2535"}`,borderRadius:10,color:"#e2e8f0",fontSize:15,outline:"none",textAlign:"center",letterSpacing:5,boxSizing:"border-box",marginBottom:8,transition:"border-color .2s"}}
+        />
+        {err
+          ? <div style={{color:"#ff4d6d",fontSize:12,textAlign:"center",marginBottom:12,height:18}}>⚠️ {err}</div>
+          : <div style={{height:18,marginBottom:12}}/>
+        }
+        <button onClick={submit} disabled={!pwd}
+          style={{width:"100%",padding:13,background:pwd?"linear-gradient(135deg,#1d4ed8,#7c3aed)":"#1e2535",border:"none",borderRadius:10,color:pwd?"#fff":"#4b5563",fontSize:14,fontWeight:700,cursor:pwd?"pointer":"default",letterSpacing:2,transition:"all .2s"}}>
+          进 入
+        </button>
+        <p style={{textAlign:"center",color:"#1e2535",fontSize:11,marginTop:20,marginBottom:0}}>进入后可在 ⚙️ 设置中配置 AI 功能</p>
+      </div>
+    </div>
+  );
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  ⚙️ 设置 Modal（AI 模型 & API Key）
+// ══════════════════════════════════════════════════════════════════════════════
+function SettingsModal({onClose}) {
+  const [provider,setProvider] = useState(()=>db.get("actor-provider")||"deepseek");
+  const [keys,setKeys] = useState({
+    claude:   db.get("actor-api-key-claude")||"",
+    gemini:   db.get("actor-api-key-gemini")||"",
+    deepseek: db.get("actor-api-key-deepseek")||"",
+  });
+  const [show,setShow]     = useState({claude:false,gemini:false,deepseek:false});
+  const [testing,setTesting] = useState(false);
+  const [status,setStatus]  = useState(""); // "" | "ok" | "err:msg"
+
+  const PROVIDERS = [
+    {id:"deepseek",name:"DeepSeek",ph:"sk-...",color:"#22d3ee"},
+    {id:"gemini",  name:"Gemini",  ph:"AIza...",color:"#34d399"},
+    {id:"claude",  name:"Claude",  ph:"sk-ant-...",color:"#a78bfa"},
+  ];
+
+  const save = async () => {
+    const key = keys[provider].trim();
+    if (!key) { setStatus("err:请填写当前所选模型的 API Key"); return; }
+    setTesting(true); setStatus("");
+    try {
+      let url, headers, body;
+      if (provider==="claude") {
+        url="https://api.anthropic.com/v1/messages";
+        headers={"Content-Type":"application/json","x-api-key":key,"anthropic-version":"2023-06-01","anthropic-dangerous-direct-browser-access":"true"};
+        body=JSON.stringify({model:"claude-3-5-sonnet-20241022",max_tokens:5,messages:[{role:"user",content:"hi"}]});
+      } else if (provider==="gemini") {
+        url=`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${key}`;
+        headers={"Content-Type":"application/json"};
+        body=JSON.stringify({contents:[{parts:[{text:"hi"}]}]});
+      } else {
+        url="https://api.deepseek.com/chat/completions";
+        headers={"Content-Type":"application/json","Authorization":`Bearer ${key}`};
+        body=JSON.stringify({model:"deepseek-chat",messages:[{role:"user",content:"hi"}]});
+      }
+      const res = await fetch(url,{method:"POST",headers,body});
+      if(!res.ok){const e=await res.json().catch(()=>({}));throw new Error(e.error?.message||`HTTP ${res.status}`);}
+      // 保存
+      db.set("actor-provider", provider);
+      Object.entries(keys).forEach(([p,k])=>k.trim()&&db.set(`actor-api-key-${p}`,k.trim()));
+      setStatus("ok");
+      setTimeout(onClose, 800);
+    } catch(e) { setStatus("err:"+e.message); }
+    finally { setTesting(false); }
+  };
+
+  return(
+    <div style={S.overlay}>
+      <div style={{...S.modal,maxWidth:460}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:18}}>
+          <h3 style={{color:"#e2e8f0",margin:0,fontSize:16,fontWeight:700}}>⚙️ AI 功能设置</h3>
+          <button onClick={onClose} style={S.closeBtn}>✕</button>
         </div>
 
-        {/* 模型切换 */}
-        <div style={{display:"flex",gap:8,marginBottom:18}}>
-          {[{id:"deepseek",name:"DeepSeek"},{id:"gemini",name:"Gemini"},{id:"claude",name:"Claude"}].map(p=>(
-            <button key={p.id} onClick={()=>handleProviderChange(p.id)}
-              style={{flex:1, padding:"8px", borderRadius:8, border:"1px solid #1e2535", background:provider===p.id?"#1e3a5f":"#111827", color:provider===p.id?"#93c5fd":"#6b7280", cursor:"pointer", fontSize:12, fontWeight:provider===p.id?600:400, transition:"all .2s"}}>
-              {p.name}
-            </button>
+        {/* 选择模型 */}
+        <div style={{marginBottom:16}}>
+          <label style={{fontSize:11,color:"#6b7280",display:"block",marginBottom:8}}>当前使用模型</label>
+          <div style={{display:"flex",gap:8}}>
+            {PROVIDERS.map(p=>(
+              <button key={p.id} onClick={()=>setProvider(p.id)} style={{flex:1,padding:"9px 0",borderRadius:9,border:`1px solid ${provider===p.id?p.color+"60":"#1e2535"}`,background:provider===p.id?"#0d1521":"#111827",color:provider===p.id?p.color:"#6b7280",cursor:"pointer",fontSize:12,fontWeight:provider===p.id?700:400,transition:"all .15s"}}>
+                {p.name}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* 各模型 Key 输入 */}
+        <div style={{display:"flex",flexDirection:"column",gap:10,marginBottom:16}}>
+          {PROVIDERS.map(p=>(
+            <div key={p.id} style={{padding:"10px 13px",background:"#111827",borderRadius:9,border:`1px solid ${provider===p.id?p.color+"40":"#1e2535"}`,opacity:provider===p.id?1:0.6,transition:"all .15s"}}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
+                <span style={{fontSize:11,color:p.color,fontWeight:600}}>{p.name} API Key</span>
+                {keys[p.id]&&<span style={{fontSize:10,color:"#34c759"}}>✓ 已填写</span>}
+              </div>
+              <div style={{position:"relative"}}>
+                <input
+                  type={show[p.id]?"text":"password"}
+                  value={keys[p.id]}
+                  onChange={e=>setKeys(k=>({...k,[p.id]:e.target.value}))}
+                  placeholder={p.ph}
+                  style={{width:"100%",padding:"8px 34px 8px 10px",background:"#0d1521",border:"1px solid #1e2535",borderRadius:7,color:"#e2e8f0",fontSize:12,outline:"none",boxSizing:"border-box"}}
+                />
+                <button onClick={()=>setShow(s=>({...s,[p.id]:!s[p.id]}))} style={{position:"absolute",right:8,top:"50%",transform:"translateY(-50%)",background:"none",border:"none",color:"#4b5563",cursor:"pointer",fontSize:13,padding:0}}>{show[p.id]?"🙈":"👁"}</button>
+              </div>
+            </div>
           ))}
         </div>
 
-        {/* 访问密码 */}
-        <div style={{marginBottom:13}}>
-          <label style={{display:"block",fontSize:11,color:"#6b7280",marginBottom:5}}>系统访问密码</label>
-          <input type="password" value={pwd} onChange={e=>{setPwd(e.target.value);setErr("");}}
-            onKeyDown={e=>e.key==="Enter"&&submit()} placeholder="请输入访问密码"
-            style={{width:"100%",padding:"10px 14px",background:"#111827",border:"1px solid #1e2535",borderRadius:8,color:"#e2e8f0",fontSize:13,outline:"none",letterSpacing:3,boxSizing:"border-box"}}/>
+        <div style={{padding:"8px 12px",background:"#0d1521",borderRadius:7,fontSize:10,color:"#374151",lineHeight:1.7,marginBottom:14}}>
+          🔒 Key 仅保存在本浏览器 localStorage，不经过任何服务器
         </div>
 
-        {/* API Key */}
-        <div style={{marginBottom:16}}>
-          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:5}}>
-            <label style={{fontSize:11,color:"#6b7280"}}>{provider.charAt(0).toUpperCase() + provider.slice(1)} API Key</label>
-          </div>
-          <div style={{position:"relative"}}>
-            <input type={showKey?"text":"password"} value={apiKey} onChange={e=>{setApiKey(e.target.value);setErr("");}}
-              onKeyDown={e=>e.key==="Enter"&&submit()} placeholder={ph}
-              style={{width:"100%",padding:"10px 38px 10px 14px",background:"#111827",border:"1px solid #1e2535",borderRadius:8,color:"#e2e8f0",fontSize:12,outline:"none",boxSizing:"border-box"}}/>
-            <button onClick={()=>setShowKey(v=>!v)} style={{position:"absolute",right:10,top:"50%",transform:"translateY(-50%)",background:"none",border:"none",color:"#4b5563",cursor:"pointer",fontSize:15,padding:0}}>
-              {showKey?"🙈":"👁"}
+        {status==="ok"&&<div style={{marginBottom:10,padding:"8px 12px",background:"#0d2010",border:"1px solid #34d39940",borderRadius:7,color:"#34d399",fontSize:12}}>✅ 保存成功，设置已生效</div>}
+        {status.startsWith("err:")&&<div style={{marginBottom:10,padding:"8px 12px",background:"#2a1215",border:"1px solid #ff4d6d40",borderRadius:7,color:"#ff4d6d",fontSize:12}}>⚠️ {status.slice(4)}</div>}
+
+        <div style={{display:"flex",gap:8,justifyContent:"flex-end"}}>
+          <button onClick={onClose} style={S.btnSecondary}>取消</button>
+          <button onClick={save} disabled={testing} style={{...S.btnPrimary,opacity:testing?.6:1}}>{testing?"🔄 验证中...":"💾 保存设置"}</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  📦 数据导出 / 导入 Modal
+// ══════════════════════════════════════════════════════════════════════════════
+function DataModal({actors, onClose, onImport}) {
+  const [tab,setTab]     = useState("export"); // "export" | "import"
+  const [jsonText,setJsonText] = useState("");
+  const [parseErr,setParseErr] = useState("");
+  const [importOk,setImportOk] = useState("");
+
+  // 导出：生成 JSON 并下载
+  const doExport = () => {
+    const data = { version:1, exportedAt: new Date().toISOString(), count: actors.length, actors };
+    const blob = new Blob([JSON.stringify(data,null,2)],{type:"application/json"});
+    const url  = URL.createObjectURL(blob);
+    const a    = document.createElement("a");
+    a.href = url;
+    a.download = `演员库_${new Date().toISOString().slice(0,10)}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  // 读取文件
+  const readFile = e => {
+    const file = e.target.files[0];
+    if(!file) return;
+    const reader = new FileReader();
+    reader.onload = ev => { setJsonText(ev.target.result); setParseErr(""); setImportOk(""); };
+    reader.readAsText(file);
+  };
+
+  // 导入：解析 JSON 并合并
+  const doImport = () => {
+    try {
+      const data = JSON.parse(jsonText);
+      const incoming = Array.isArray(data) ? data : data.actors;
+      if(!Array.isArray(incoming)||!incoming.length) throw new Error("未找到有效的演员数据");
+      // 简单校验必要字段
+      incoming.forEach((a,i)=>{ if(!a.name) throw new Error(`第 ${i+1} 条数据缺少姓名`); });
+      // 去重（按姓名）合并，重新分配 id
+      const existNames = new Set(actors.map(a=>a.name));
+      const newOnes = incoming.filter(a=>!existNames.has(a.name)).map((a,i)=>({...a,id:Date.now()+i}));
+      const dupCount = incoming.length - newOnes.length;
+      onImport(newOnes);
+      setImportOk(`✅ 成功导入 ${newOnes.length} 位演员${dupCount?`，跳过 ${dupCount} 位重名`:""}`);
+      setJsonText("");
+    } catch(e) { setParseErr("❌ 解析失败："+e.message); }
+  };
+
+  const TAB = {padding:"7px 18px",borderRadius:20,border:"none",cursor:"pointer",fontSize:12,fontWeight:600,transition:"all .15s"};
+
+  return(
+    <div style={S.overlay}>
+      <div style={{...S.modal,maxWidth:500}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16}}>
+          <h3 style={{color:"#e2e8f0",margin:0,fontSize:16,fontWeight:700}}>📦 数据导出 / 导入</h3>
+          <button onClick={onClose} style={S.closeBtn}>✕</button>
+        </div>
+
+        {/* Tab */}
+        <div style={{display:"flex",gap:6,marginBottom:18,background:"#111827",padding:4,borderRadius:24}}>
+          <button onClick={()=>setTab("export")} style={{...TAB,flex:1,background:tab==="export"?"#1e3a5f":"transparent",color:tab==="export"?"#93c5fd":"#6b7280"}}>📤 导出数据库</button>
+          <button onClick={()=>setTab("import")} style={{...TAB,flex:1,background:tab==="import"?"#1a2e1a":"transparent",color:tab==="import"?"#34d399":"#6b7280"}}>📥 导入数据库</button>
+        </div>
+
+        {tab==="export"&&(
+          <div>
+            <div style={{background:"#111827",borderRadius:10,padding:16,marginBottom:16}}>
+              <div style={{fontSize:13,color:"#e2e8f0",fontWeight:600,marginBottom:6}}>当前数据库</div>
+              <div style={{fontSize:12,color:"#6b7280",lineHeight:1.8}}>
+                共 <span style={{color:"#93c5fd",fontWeight:700}}>{actors.length}</span> 位演员<br/>
+                格式：JSON 文件，包含所有演员信息、照片链接、舆情数据
+              </div>
+            </div>
+            <div style={{background:"#0d1521",borderRadius:9,padding:"10px 13px",marginBottom:16,fontSize:11,color:"#4b5563",lineHeight:1.7}}>
+              💡 导出的 JSON 文件可在其他设备上通过「导入数据库」恢复全部演员数据
+            </div>
+            <button onClick={doExport} style={{...S.btnPrimary,width:"100%",fontSize:13}}>
+              📥 下载 演员库_{new Date().toISOString().slice(0,10)}.json
             </button>
           </div>
-          <div style={{marginTop:6,padding:"8px 10px",background:"#111827",borderRadius:6,fontSize:10,color:"#374151",lineHeight:1.7}}>
-            Key 仅保存在你的浏览器本地，不上传任何中间服务器。
+        )}
+
+        {tab==="import"&&(
+          <div>
+            <div style={{background:"#111827",borderRadius:10,padding:16,marginBottom:14}}>
+              <div style={{fontSize:12,color:"#6b7280",lineHeight:1.8,marginBottom:12}}>
+                支持导入之前导出的 JSON 文件，重名演员自动跳过，不会覆盖现有数据
+              </div>
+              {/* 文件选择 */}
+              <label style={{display:"block",padding:"20px",border:"2px dashed #1e2535",borderRadius:9,textAlign:"center",cursor:"pointer",transition:"border-color .15s"}}
+                onDragOver={e=>{e.preventDefault();}} onDrop={e=>{e.preventDefault();const f=e.dataTransfer.files[0];if(f){const r=new FileReader();r.onload=ev=>{setJsonText(ev.target.result);setParseErr("");setImportOk("");};r.readAsText(f);}}}>
+                <div style={{fontSize:28,marginBottom:6}}>📂</div>
+                <div style={{fontSize:12,color:"#6b7280"}}>点击选择 JSON 文件，或拖拽到此处</div>
+                <input type="file" accept=".json" onChange={readFile} style={{display:"none"}}/>
+              </label>
+            </div>
+
+            {jsonText&&(
+              <div style={{background:"#0d2010",border:"1px solid #34d39930",borderRadius:9,padding:"10px 13px",marginBottom:12,fontSize:11,color:"#6ee7b7"}}>
+                ✓ 已读取文件，点击下方按钮导入
+              </div>
+            )}
+            {parseErr&&<div style={{marginBottom:12,padding:"8px 12px",background:"#2a1215",border:"1px solid #ff4d6d40",borderRadius:7,color:"#ff4d6d",fontSize:12}}>{parseErr}</div>}
+            {importOk&&<div style={{marginBottom:12,padding:"8px 12px",background:"#0d2010",border:"1px solid #34d39940",borderRadius:7,color:"#34d399",fontSize:12}}>{importOk}</div>}
+
+            <div style={{display:"flex",gap:8}}>
+              <button onClick={onClose} style={{...S.btnSecondary,flex:1}}>关闭</button>
+              <button onClick={doImport} disabled={!jsonText} style={{...S.btnPrimary,flex:2,background:"linear-gradient(135deg,#059669,#34d399)",opacity:jsonText?1:.4}}>
+                📥 确认导入
+              </button>
+            </div>
           </div>
-        </div>
+        )}
 
-        {/* 错误提示 */}
-        {err && <div style={{marginBottom:12,padding:"8px 12px",background:"#2a1215",border:"1px solid #ff4d6d40",borderRadius:7,color:"#ff4d6d",fontSize:12}}>⚠️ {err}</div>}
-
-        {/* 登录按钮 */}
-        <button onClick={submit} disabled={testing||!pwd||!apiKey}
-          style={{width:"100%",padding:12,background:(!pwd||!apiKey||testing)?"#1e2535":"linear-gradient(135deg,#1d4ed8,#7c3aed)",border:"none",borderRadius:10,color:(!pwd||!apiKey||testing)?"#4b5563":"#fff",fontSize:14,fontWeight:700,cursor:(!pwd||!apiKey||testing)?"default":"pointer",letterSpacing:1,transition:"all .2s"}}>
-          {testing?"🔄 验证中...":"进 入"}
-        </button>
+        {tab==="export"&&<button onClick={onClose} style={{...S.btnSecondary,width:"100%",marginTop:10}}>关闭</button>}
       </div>
     </div>
   );
@@ -582,230 +614,6 @@ function BatchImportModal({existingNames, onClose, onImport}) {
             </div>
           </>
         )}
-      </div>
-    </div>
-  );
-}
-
-}
-
-// ══════════════════════════════════════════════════════════════════════════════
-//  🎬 按影视作品导入演员 Modal
-// ══════════════════════════════════════════════════════════════════════════════
-function CastImportModal({existingNames, onClose, onImport}) {
-  const [title,setTitle]     = useState("");
-  const [year,setYear]       = useState("");
-  const [step,setStep]       = useState("input");   // input|fetching|select|importing|done
-  const [castResult,setCastResult] = useState(null); // {names, source, pageTitle}
-  const [fetchErr,setFetchErr]     = useState("");
-  const [checked,setChecked]       = useState(new Set());
-  const [queue,setQueue]     = useState([]);
-  const [curIdx,setCurIdx]   = useState(-1);
-  const aiName = db.get("actor-provider")?.toUpperCase()||"AI";
-
-  // Step1 → 抓取演员表
-  const doFetch = async () => {
-    if(!title.trim()) return;
-    setStep("fetching"); setFetchErr(""); setCastResult(null); setChecked(new Set());
-    const r = await fetchCastFromWork(title.trim(), year.trim());
-    if(!r||!r.names?.length) {
-      setFetchErr("未能获取到演员表，请检查作品名称是否正确，或尝试添加年份");
-      setStep("input"); return;
-    }
-    // 标注已在库中的演员
-    const enriched = r.names.map(name=>({ name, inDb: existingNames.includes(name) }));
-    setCastResult({...r, cast: enriched});
-    // 默认勾选不在库中的演员
-    setChecked(new Set(enriched.filter(a=>!a.inDb).map(a=>a.name)));
-    setStep("select");
-  };
-
-  // Step2 → 勾选后开始导入
-  const doImport = async () => {
-    const toImport = castResult.cast.filter(a=>checked.has(a.name)&&!a.inDb).map(a=>a.name);
-    if(!toImport.length) return;
-    setQueue(toImport.map(name=>({name,status:"pending",actor:null,error:""})));
-    setStep("importing");
-    const results = [];
-    for(let i=0;i<toImport.length;i++){
-      setCurIdx(i);
-      setQueue(q=>q.map((x,idx)=>idx===i?{...x,status:"loading"}:x));
-      try{
-        const info = await fetchActorInfo(toImport[i]);
-        const actor = {
-          id: Date.now()+i,
-          name:         info.name||toImport[i],
-          gender:       info.gender==="female"?"female":"male",
-          age:          Number(info.age)||0,
-          region:       info.region==="hmt"?"hmt":"mainland",
-          photo:        info.photoUrl||"",
-          works:        Array.isArray(info.works)?info.works:[title.trim()],
-          currentWorks: Array.isArray(info.currentWorks)?info.currentWorks:[],
-          hotness:      Number(info.hotness)||60,
-          updatedAt:    new Date().toISOString().slice(0,7),
-          sentiment:    info.region==="hmt"&&info.sentiment?info.sentiment:null,
-        };
-        results.push(actor);
-        setQueue(q=>q.map((x,idx)=>idx===i?{...x,status:"done",actor}:x));
-      } catch(e) {
-        setQueue(q=>q.map((x,idx)=>idx===i?{...x,status:"error",error:e.message}:x));
-      }
-      await new Promise(r=>setTimeout(r,1400));
-    }
-    setCurIdx(-1);
-    setStep("done");
-    window.__castImportResults__ = results;
-  };
-
-  const applyAll = () => { onImport(window.__castImportResults__||[]); onClose(); };
-  const toggleCheck = name => setChecked(p=>{ const n=new Set(p); n.has(name)?n.delete(name):n.add(name); return n; });
-  const toggleAll = () => {
-    const selectable = castResult.cast.filter(a=>!a.inDb).map(a=>a.name);
-    setChecked(p=>p.size===selectable.length?new Set():new Set(selectable));
-  };
-  const doneCount = queue.filter(x=>x.status==="done").length;
-  const errCount  = queue.filter(x=>x.status==="error").length;
-
-  // ── 渠道 badge 颜色
-  const srcColor = s => s.includes("中文维基")?"#60a5fa":s.includes("英文维基")?"#34d399":s.includes("百度")?"#f59e0b":"#a78bfa";
-
-  return(
-    <div style={S.overlay}>
-      <div style={{...S.modal,maxWidth:580,maxHeight:"90vh"}}>
-
-        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16}}>
-          <h3 style={{color:"#e2e8f0",margin:0,fontSize:16,fontWeight:700}}>🎬 按影视作品导入演员</h3>
-          <button onClick={onClose} disabled={step==="fetching"||step==="importing"} style={S.closeBtn}>✕</button>
-        </div>
-
-        {/* ── Step 1: 输入作品 ── */}
-        {(step==="input"||step==="fetching")&&(
-          <>
-            <div style={{background:"#111827",borderRadius:9,padding:"10px 14px",marginBottom:14,fontSize:11,color:"#6b7280",lineHeight:1.8}}>
-              输入影视作品名称，将自动从 <span style={{color:"#60a5fa"}}>维基百科</span>（中文/英文）抓取演员表，抓取失败时用 <span style={{color:"#a78bfa"}}>{aiName}</span> 兜底
-            </div>
-            <div style={{display:"grid",gridTemplateColumns:"1fr auto",gap:8,marginBottom:10}}>
-              <input
-                value={title} onChange={e=>setTitle(e.target.value)}
-                onKeyDown={e=>e.key==="Enter"&&doFetch()}
-                placeholder="作品名称，如：捕风捉影"
-                style={{...S.input,fontSize:14}}
-              />
-              <input
-                value={year} onChange={e=>setYear(e.target.value)}
-                placeholder="年份（可选）"
-                style={{...S.input,width:100,fontSize:13}}
-              />
-            </div>
-            {fetchErr&&<div style={{marginBottom:10,padding:"8px 12px",background:"#2a1215",border:"1px solid #ff4d6d40",borderRadius:7,color:"#ff4d6d",fontSize:12}}>⚠️ {fetchErr}</div>}
-            <div style={{display:"flex",gap:8,justifyContent:"flex-end"}}>
-              <button onClick={onClose} style={S.btnSecondary}>取消</button>
-              <button onClick={doFetch} disabled={!title.trim()||step==="fetching"}
-                style={{...S.btnPrimary,opacity:(!title.trim()||step==="fetching")?.5:1,minWidth:120}}>
-                {step==="fetching"
-                  ? <span style={{display:"flex",alignItems:"center",gap:6}}><span style={{animation:"spin 1s linear infinite",display:"inline-block"}}>◐</span>查询中...</span>
-                  : "🔍 查找演员表"}
-              </button>
-            </div>
-          </>
-        )}
-
-        {/* ── Step 2: 勾选演员 ── */}
-        {step==="select"&&castResult&&(
-          <>
-            {/* 来源 badge */}
-            <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:12,flexWrap:"wrap"}}>
-              <span style={{fontSize:11,color:"#6b7280"}}>数据来源：</span>
-              <span style={{fontSize:11,fontWeight:700,color:srcColor(castResult.source),background:srcColor(castResult.source)+"15",padding:"2px 9px",borderRadius:12}}>
-                {castResult.source}
-              </span>
-              {castResult.pageTitle&&<span style={{fontSize:10,color:"#374151"}}>词条：{castResult.pageTitle}</span>}
-              <button onClick={()=>setStep("input")} style={{...S.btnTiny,marginLeft:"auto"}}>← 重新搜索</button>
-            </div>
-
-            {/* 全选 */}
-            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8,padding:"6px 10px",background:"#111827",borderRadius:7}}>
-              <span style={{fontSize:12,color:"#9ca3af"}}>找到 <b style={{color:"#e2e8f0"}}>{castResult.cast.length}</b> 位演员，已选 <b style={{color:"#60a5fa"}}>{checked.size}</b> 位</span>
-              <button onClick={toggleAll} style={{...S.btnTiny,fontSize:11}}>
-                {checked.size===castResult.cast.filter(a=>!a.inDb).length?"取消全选":"全选可导入"}
-              </button>
-            </div>
-
-            {/* 演员列表 */}
-            <div style={{maxHeight:300,overflowY:"auto",border:"1px solid #1e2535",borderRadius:9,marginBottom:14}}>
-              {castResult.cast.map((a,i)=>(
-                <div key={i} onClick={()=>!a.inDb&&toggleCheck(a.name)}
-                  style={{display:"flex",alignItems:"center",gap:10,padding:"9px 12px",borderBottom:i<castResult.cast.length-1?"1px solid #1e2535":"none",cursor:a.inDb?"default":"pointer",background:checked.has(a.name)?"#0d1b2a":i%2===0?"#0a1118":"transparent",transition:"background .1s"}}>
-                  {/* Checkbox */}
-                  <div style={{width:18,height:18,borderRadius:4,flexShrink:0,border:`2px solid ${a.inDb?"#1e2535":checked.has(a.name)?"#3b82f6":"#374151"}`,background:a.inDb?"transparent":checked.has(a.name)?"#3b82f6":"transparent",display:"flex",alignItems:"center",justifyContent:"center",transition:"all .15s"}}>
-                    {checked.has(a.name)&&<span style={{color:"#fff",fontSize:11,lineHeight:1}}>✓</span>}
-                  </div>
-                  <div style={{flex:1,minWidth:0}}>
-                    <span style={{fontSize:13,color:a.inDb?"#4b5563":"#e2e8f0",fontWeight:600}}>{a.name}</span>
-                    {a.inDb&&<span style={{fontSize:10,color:"#34c759",marginLeft:8}}>✓ 已在库中</span>}
-                  </div>
-                  <span style={{fontSize:11,color:"#374151"}}>{i+1}</span>
-                </div>
-              ))}
-            </div>
-
-            <div style={{display:"flex",gap:8,justifyContent:"flex-end"}}>
-              <button onClick={onClose} style={S.btnSecondary}>取消</button>
-              <button onClick={doImport} disabled={checked.size===0}
-                style={{...S.btnPrimary,opacity:checked.size>0?1:.4}}>
-                🚀 导入选中 {checked.size} 位演员
-              </button>
-            </div>
-          </>
-        )}
-
-        {/* ── Step 3: 导入进度 & 结果 ── */}
-        {(step==="importing"||step==="done")&&(
-          <>
-            <div style={{display:"flex",gap:16,marginBottom:10,padding:"8px 12px",background:"#0d1521",borderRadius:8,fontSize:12,flexWrap:"wrap"}}>
-              <span style={{color:"#34c759"}}>✅ {doneCount} 成功</span>
-              <span style={{color:"#ff4d6d"}}>❌ {errCount} 失败</span>
-              <span style={{color:"#6b7280"}}>○ {queue.filter(x=>x.status==="pending").length} 待处理</span>
-              {step==="importing"&&curIdx>=0&&<span style={{color:"#60a5fa",marginLeft:"auto"}}>正在处理：{queue[curIdx]?.name}</span>}
-              {step==="done"&&<span style={{color:"#34c759",marginLeft:"auto"}}>全部完成 🎉</span>}
-            </div>
-            {step==="importing"&&(
-              <div style={{background:"#1e2535",height:3,borderRadius:4,overflow:"hidden",marginBottom:12}}>
-                <div style={{height:"100%",width:`${((doneCount+errCount)/queue.length)*100}%`,background:"linear-gradient(90deg,#3b82f6,#7c3aed)",borderRadius:4,transition:"width .4s"}}/>
-              </div>
-            )}
-            <div style={{maxHeight:320,overflowY:"auto",border:"1px solid #1e2535",borderRadius:8,marginBottom:14}}>
-              {queue.map((item,i)=>(
-                <div key={i} style={{display:"flex",alignItems:"center",gap:10,padding:"10px 12px",borderBottom:i<queue.length-1?"1px solid #1e2535":"none",background:i===curIdx?"#0d1b2a":"transparent"}}>
-                  <div style={{width:32,height:44,borderRadius:5,overflow:"hidden",border:"1px solid #1e2535",flexShrink:0,background:"#1a2233",display:"flex",alignItems:"center",justifyContent:"center",fontSize:14}}>
-                    {item.actor?.photo
-                      ?<img src={item.actor.photo} style={{width:"100%",height:"100%",objectFit:"cover",objectPosition:"top"}} onError={e=>e.target.style.display="none"}/>
-                      :(item.actor?.gender==="female"?"👩":"👨")
-                    }
-                  </div>
-                  <div style={{flex:1,minWidth:0}}>
-                    <div style={{fontSize:13,color:"#e2e8f0",fontWeight:600}}>{item.name}</div>
-                    {item.actor&&<div style={{fontSize:10,color:"#4b5563",marginTop:1}}>
-                      {item.actor.gender==="female"?"女":"男"} · {item.actor.age}岁 · {item.actor.region==="hmt"?"港澳台":"内地"} · 热度 {item.actor.hotness}
-                    </div>}
-                    {item.error&&<div style={{fontSize:10,color:"#ff4d6d",marginTop:1}}>⚠ {item.error}</div>}
-                  </div>
-                  <div style={{fontSize:16,flexShrink:0}}>
-                    {item.status==="pending"  &&<span style={{color:"#374151"}}>○</span>}
-                    {item.status==="loading"  &&<span style={{color:"#60a5fa",display:"inline-block",animation:"spin 1s linear infinite"}}>◐</span>}
-                    {item.status==="done"     &&<span>✅</span>}
-                    {item.status==="error"    &&<span>❌</span>}
-                  </div>
-                </div>
-              ))}
-            </div>
-            <div style={{display:"flex",gap:8,justifyContent:"flex-end"}}>
-              <button onClick={onClose} disabled={step==="importing"} style={S.btnSecondary}>关闭</button>
-              {step==="done"&&doneCount>0&&<button onClick={applyAll} style={S.btnPrimary}>✅ 加入演员库 {doneCount} 位</button>}
-            </div>
-          </>
-        )}
-
       </div>
     </div>
   );
@@ -1318,12 +1126,13 @@ function App() {
   const [fYearRange,setFYearRange] = useState(null); // 解析后 {from, to} 或 null
   const [sortBy,setSortBy] = useState("hotness");
   const [selected,setSelected] = useState(null);
-  const [showAdd,setShowAdd]           = useState(false);
-  const [showBatch,setShowBatch]       = useState(false);
-  const [showImport,setShowImport]     = useState(false);
-  const [showCastImport,setShowCastImport] = useState(false);
-  const [aiLoading,setAiLoading]       = useState(false);
-  const [aiStatus,setAiStatus]         = useState("");
+  const [showAdd,setShowAdd]       = useState(false);
+  const [showBatch,setShowBatch]   = useState(false);
+  const [showImport,setShowImport] = useState(false);
+  const [showSettings,setShowSettings] = useState(false);
+  const [showData,setShowData]     = useState(false);
+  const [aiLoading,setAiLoading]   = useState(false);
+  const [aiStatus,setAiStatus]     = useState("");
 
   useEffect(()=>{ db.set("actor-db-v6",actors); },[actors]);
 
@@ -1385,10 +1194,11 @@ function App() {
           <div style={{display:"flex",gap:7,alignItems:"center",flexWrap:"wrap"}}>
             <span style={{background:"#1e2535",color:"#6b7280",padding:"4px 10px",borderRadius:20,fontSize:11}}>{actors.length} 位演员</span>
             <button onClick={()=>setShowImport(true)} style={{...S.btnSecondary,borderColor:"#7c3aed50",color:"#c4b5fd"}}>📋 批量导入</button>
-            <button onClick={()=>setShowCastImport(true)} style={{...S.btnSecondary,borderColor:"#f59e0b50",color:"#fbbf24"}}>🎬 按作品导入</button>
             <button onClick={()=>setShowBatch(true)} style={S.btnSecondary}>🌐 批量更新照片</button>
+            <button onClick={()=>setShowData(true)} style={{...S.btnSecondary,borderColor:"#34d39940",color:"#34d399"}}>📦 数据管理</button>
             <button onClick={()=>setShowAdd(true)} style={S.btnPrimary}>＋ 添加演员</button>
-            <button onClick={()=>{db.set("actor-auth",null);setAuthed(false);}} style={{...S.btnTiny,fontSize:10}}>退出 (当前模型: {aiName})</button>
+            <button onClick={()=>setShowSettings(true)} style={{...S.btnTiny,fontSize:12}}>⚙️ 设置</button>
+            <button onClick={()=>{db.set("actor-auth",null);setAuthed(false);}} style={{...S.btnTiny,fontSize:10}}>退出</button>
           </div>
         </div>
       </header>
@@ -1463,10 +1273,11 @@ function App() {
         )}
       </div>
 
-      {showAdd    &&<AddActorModal onClose={()=>setShowAdd(false)} onAdd={a=>setActors(p=>[...p,a])}/>}
-      {showBatch  &&<BatchPhotoModal actors={actors} onClose={()=>setShowBatch(false)} onUpdate={updatePhoto}/>}
-      {showImport &&<BatchImportModal existingNames={actors.map(a=>a.name)} onClose={()=>setShowImport(false)} onImport={importActors}/>}
-      {showCastImport&&<CastImportModal existingNames={actors.map(a=>a.name)} onClose={()=>setShowCastImport(false)} onImport={importActors}/>}
+      {showAdd      &&<AddActorModal onClose={()=>setShowAdd(false)} onAdd={a=>setActors(p=>[...p,a])}/>}
+      {showBatch    &&<BatchPhotoModal actors={actors} onClose={()=>setShowBatch(false)} onUpdate={updatePhoto}/>}
+      {showImport   &&<BatchImportModal existingNames={actors.map(a=>a.name)} onClose={()=>setShowImport(false)} onImport={importActors}/>}
+      {showSettings &&<SettingsModal onClose={()=>setShowSettings(false)}/>}
+      {showData     &&<DataModal actors={actors} onClose={()=>setShowData(false)} onImport={newActors=>{setActors(p=>[...p,...newActors]);}}/>}
     </div>
   );
 }
