@@ -67,6 +67,12 @@ const db = {
 };
 const parseList = s => s.split(/[，,\n]/).map(x=>x.trim()).filter(Boolean);
 
+// ── 繁体→简体转换（覆盖娱乐圈常用字） ──────────────────────────────────────
+const _T2S={"後":"后","個":"个","這":"这","國":"国","來":"来","時":"时","會":"会","們":"们","說":"说","對":"对","裡":"里","還":"还","從":"从","發":"发","問":"问","當":"当","頭":"头","點":"点","過":"过","麼":"么","動":"动","現":"现","話":"话","開":"开","應":"应","讓":"让","給":"给","關":"关","歡":"欢","廣":"广","優":"优","義":"义","樣":"样","權":"权","員":"员","處":"处","號":"号","樓":"楼","際":"际","戲":"戏","舊":"旧","藝":"艺","進":"进","間":"间","長":"长","門":"门","興":"兴","風":"风","經":"经","業":"业","錢":"钱","愛":"爱","術":"术","豐":"丰","歷":"历","寶":"宝","傳":"传","億":"亿","夢":"梦","歲":"岁","聽":"听","總":"总","師":"师","體":"体","橋":"桥","滿":"满","醫":"医","絕":"绝","獻":"献","熱":"热","標":"标","飛":"飞","積":"积","識":"识","製":"制","執":"执","終":"终","齊":"齐","協":"协","調":"调","編":"编","語":"语","認":"认","績":"绩","態":"态","勢":"势","備":"备","緊":"紧","職":"职","隊":"队","選":"选","鋒":"锋","誠":"诚","維":"维","謙":"谦","嶺":"岭","偵":"侦","獎":"奖","龍":"龙","鳳":"凤","強":"强","華":"华","麗":"丽","偉":"伟","慶":"庆","傑":"杰","軍":"军","燈":"灯","圖":"图","農":"农","産":"产","幣":"币","頂":"顶","險":"险","頻":"频","爭":"争","購":"购","項":"项","試":"试","議":"议","盡":"尽","階":"阶","達":"达","勵":"励","顯":"显","鏡":"镜","縣":"县","嶸":"嵘","顧":"顾","韻":"韵","颯":"飒","颱":"台","靈":"灵","齡":"龄","齒":"齿",
+"劉":"刘","陳":"陈","楊":"杨","張":"张","趙":"赵","黃":"黄","孫":"孙","吳":"吴","馬":"马","韓":"韩","鄭":"郑","謝":"谢","許":"许","呂":"吕","盧":"卢","鄧":"邓","葉":"叶","賈":"贾","歐":"欧","顏":"颜","魏":"魏","費":"费","閻":"阎","賀":"贺","龐":"庞","馮":"冯","蕭":"萧","龔":"龚","賴":"赖","藍":"蓝","範":"范","傅":"傅","湯":"汤","韋":"韦","饒":"饶","蔣":"蒋","彭":"彭","賓":"宾","鍾":"钟","歸":"归",
+"曉":"晓","純":"纯","瀾":"澜","燁":"烨","錦":"锦","瑋":"玮","鈞":"钧","瑩":"莹","驍":"骁","鴻":"鸿","軒":"轩","暉":"晖","頡":"颉","瑤":"瑶","鋒":"锋","濤":"涛","澤":"泽","崢":"峥","騰":"腾","馳":"驰","盪":"荡","飄":"飘","嘉":"嘉","繁":"繁","繪":"绘","務":"务","覺":"觉","圍":"围","類":"类","幹":"干","響":"响","讀":"读"};
+function toSimplified(s){if(!s)return s;return s.split("").map(c=>_T2S[c]||c).join("");}
+
 // ── 统一 AI API 调用层 ────────────────────────────────────────────────────────────────
 async function fetchAIJson(prompt, useSearch = false) {
   const provider = db.get("actor-provider") || "claude";
@@ -443,7 +449,7 @@ function BatchImportModal({existingNames, onClose, onImport}) {
   const [curIdx,setCurIdx] = useState(-1);
 
   const startImport = () => {
-    const names = parseList(raw).filter(n => !existingNames.includes(n));
+    const names = parseList(raw).map(toSimplified).filter(n => !existingNames.map(toSimplified).includes(n));
     if(!names.length){alert("没有新演员名字可导入（重复或空）");return;}
     setQueue(names.map(name=>({name,status:"pending",actor:null,error:""})));
     setStep("running");
@@ -487,9 +493,10 @@ function BatchImportModal({existingNames, onClose, onImport}) {
     onClose();
   };
 
-  const names = parseList(raw);
-  const newNames = names.filter(n=>!existingNames.includes(n));
-  const dupNames = names.filter(n=>existingNames.includes(n));
+  const names = parseList(raw).map(toSimplified);
+  const simpExisting = existingNames.map(toSimplified);
+  const newNames = names.filter(n=>!simpExisting.includes(n));
+  const dupNames = names.filter(n=>simpExisting.includes(n));
   const doneCount = queue.filter(x=>x.status==="done").length;
   const errCount  = queue.filter(x=>x.status==="error").length;
   const aiName = db.get("actor-provider")?.toUpperCase() || 'AI';
@@ -611,7 +618,8 @@ function CastImportModal({existingNames, onClose, onImport}) {
       setStep("input"); return;
     }
     // 标注已在库中的演员
-    const enriched = r.names.map(name=>({ name, inDb: existingNames.includes(name) }));
+    const simpExisting = existingNames.map(toSimplified);
+    const enriched = r.names.map(name=>({ name: toSimplified(name), inDb: simpExisting.includes(toSimplified(name)) }));
     setCastResult({...r, cast: enriched});
     // 默认勾选不在库中的演员
     setChecked(new Set(enriched.filter(a=>!a.inDb).map(a=>a.name)));
@@ -1184,7 +1192,7 @@ const AddActorModal=({onClose,onAdd})=>{
   };
   const submit=()=>{
     if(!form.name.trim())return;
-    onAdd({id:Date.now(),name:form.name.trim(),gender:form.gender,age:Number(form.age)||0,region:form.region,photo:form.photo||`https://i.pravatar.cc/300?img=${Math.floor(Math.random()*70)+1}`,works:parseList(form.works),currentWorks:parseList(form.currentWorks),hotness:Number(form.hotness),updatedAt:new Date().toISOString().slice(0,7),sentiment:form.region==="hmt"?{score:Number(form.sentimentScore),positive:Number(form.sentimentScore),neutral:Math.max(0,100-Number(form.sentimentScore)-5),negative:5,keywords:[],recentEvents:[]}:null});
+    onAdd({id:Date.now(),name:toSimplified(form.name.trim()),gender:form.gender,age:Number(form.age)||0,region:form.region,photo:form.photo||`https://i.pravatar.cc/300?img=${Math.floor(Math.random()*70)+1}`,works:parseList(form.works),currentWorks:parseList(form.currentWorks),hotness:Number(form.hotness),updatedAt:new Date().toISOString().slice(0,7),sentiment:form.region==="hmt"?{score:Number(form.sentimentScore),positive:Number(form.sentimentScore),neutral:Math.max(0,100-Number(form.sentimentScore)-5),negative:5,keywords:[],recentEvents:[]}:null});
     onClose();
   };
   return(
@@ -1308,7 +1316,13 @@ const DetailDrawer=({actor,onClose,onRefresh,onPhotoUpdate,onSave,onDelete,loadi
 // ══════════════════════════════════════════════════════════════════════════════
 function App() {
   const [authed,setAuthed] = useState(()=>db.get("actor-auth")===ACCESS_PWD);
-  const [actors,setActors] = useState(()=>db.get("actor-db-v6")||SEED);
+  const [actors,setActors] = useState(()=>{
+    const raw = db.get("actor-db-v6")||SEED;
+    // 存量数据：繁体名→简体名，并按简体名去重（保留第一个）
+    const seen = new Set();
+    return raw.map(a=>({...a, name: toSimplified(a.name)}))
+              .filter(a=>{ if(seen.has(a.name)) return false; seen.add(a.name); return true; });
+  });
   const [search,setSearch] = useState("");
   const [fGender,setFGender] = useState("all");
   const [fRegion,setFRegion] = useState("all");
@@ -1332,19 +1346,26 @@ function App() {
     setSelected(p=>p?.id===id?{...p,photo:url}:p);
   };
   const saveActor=(updated)=>{
-    setActors(p=>p.map(a=>a.id===updated.id?updated:a));
-    setSelected(updated);
+    const actor = {...updated, name: toSimplified(updated.name)};
+    setActors(p=>p.map(a=>a.id===actor.id?actor:a));
+    setSelected(actor);
   };
   const deleteActor=(id)=>{
     setActors(p=>p.filter(a=>a.id!==id));
     setSelected(null);
   };
   const importActors=(newActors)=>{
-    setActors(p=>[...p,...newActors]);
+    setActors(p=>{
+      const existSimp = new Set(p.map(a=>toSimplified(a.name)));
+      const toAdd = newActors
+        .map(a=>({...a, name: toSimplified(a.name)}))
+        .filter(a=>!existSimp.has(a.name));
+      return [...p, ...toAdd];
+    });
   };
 
   const filtered = actors
-    .filter(a=>a.name.includes(search)||a.works.some(w=>w.includes(search)))
+    .filter(a=>{const q=toSimplified(search);const n=toSimplified(a.name);return !q||n.includes(q)||a.works.some(w=>toSimplified(w).includes(q));})
     .filter(a=>fGender==="all"||a.gender===fGender)
     .filter(a=>fRegion==="all"||a.region===fRegion)
     .filter(a=>{
