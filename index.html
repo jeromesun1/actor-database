@@ -46,18 +46,7 @@ const CFG        = window.__APP_CONFIG__ || {};
 const ACCESS_PWD = CFG.ACCESS_PASSWORD || "actors2025";
 
 // ── 种子数据 ──────────────────────────────────────────────────────────────────
-const SEED = [
-  {id:1, name:"易烊千玺",gender:"male",  age:24,region:"mainland",photo:"https://upload.wikimedia.org/wikipedia/commons/thumb/2/2c/Jackson_Yee_at_the_35th_Hong_Kong_Film_Awards_in_2016.jpg/440px-Jackson_Yee_at_the_35th_Hong_Kong_Film_Awards_in_2016.jpg",works:["长津湖","少年的你","奇迹·笨小孩"],currentWorks:["小小的我"],hotness:95,updatedAt:"2025-01",sentiment:null},
-  {id:2, name:"赵丽颖",  gender:"female",age:37,region:"mainland",photo:"https://upload.wikimedia.org/wikipedia/commons/thumb/5/55/Zhao_Liying_at_Weibo_Movie_Awards_2016.jpg/440px-Zhao_Liying_at_Weibo_Movie_Awards_2016.jpg",works:["花千骨","楚乔传","幸福到万家"],currentWorks:["胡同"],hotness:88,updatedAt:"2025-01",sentiment:null},
-  {id:3, name:"肖战",    gender:"male",  age:33,region:"mainland",photo:"https://upload.wikimedia.org/wikipedia/commons/thumb/e/e8/Xiao_Zhan_in_2019.jpg/440px-Xiao_Zhan_in_2019.jpg",works:["陈情令","斗罗大陆","王者天下"],currentWorks:["藏海传"],hotness:92,updatedAt:"2025-01",sentiment:null},
-  {id:4, name:"迪丽热巴",gender:"female",age:32,region:"mainland",photo:"https://upload.wikimedia.org/wikipedia/commons/thumb/e/e0/Dilraba_Dilmurat_in_2019.jpg/440px-Dilraba_Dilmurat_in_2019.jpg",works:["三生三世十里桃花","你是我的荣耀","特战荣耀"],currentWorks:["永夜星河"],hotness:90,updatedAt:"2025-01",sentiment:null},
-  {id:5, name:"王一博",  gender:"male",  age:27,region:"mainland",photo:"https://upload.wikimedia.org/wikipedia/commons/thumb/d/d8/Wang_Yibo_in_2020.jpg/440px-Wang_Yibo_in_2020.jpg",works:["陈情令","有翡","无名"],currentWorks:["追风者"],hotness:93,updatedAt:"2025-01",sentiment:null},
-  {id:6, name:"古天乐",  gender:"male",  age:53,region:"hmt",     photo:"https://upload.wikimedia.org/wikipedia/commons/thumb/0/09/Louis_Koo_2013.jpg/440px-Louis_Koo_2013.jpg",works:["神雕侠侣","寻秦记","明日战记"],currentWorks:["潜行"],hotness:82,updatedAt:"2025-01",sentiment:{score:78,positive:82,neutral:14,negative:4,keywords:["公益形象","稳定发挥","低调"],recentEvents:["捐建学校超200所","新片票房表现稳健"]}},
-  {id:7, name:"刘德华",  gender:"male",  age:63,region:"hmt",     photo:"https://upload.wikimedia.org/wikipedia/commons/thumb/4/47/Andy_Lau_2013.jpg/440px-Andy_Lau_2013.jpg",works:["无间道","天下无贼","扫毒"],currentWorks:[],hotness:85,updatedAt:"2025-01",sentiment:{score:92,positive:91,neutral:7,negative:2,keywords:["国民天王","努力","慈善"],recentEvents:["香港演唱会圆满结束","入选年度影响力艺人"]}},
-  {id:8, name:"林志玲",  gender:"female",age:49,region:"hmt",     photo:"https://upload.wikimedia.org/wikipedia/commons/thumb/3/3e/Lin_Chi-ling_2013.jpg/440px-Lin_Chi-ling_2013.jpg",works:["赤壁","大话西游3","健忘村"],currentWorks:[],hotness:70,updatedAt:"2025-01",sentiment:{score:85,positive:88,neutral:8,negative:4,keywords:["温柔","婚后低调","好感度高"],recentEvents:["偶尔出席公益活动","维持良好公众形象"]}},
-  {id:9, name:"周润发",  gender:"male",  age:69,region:"hmt",     photo:"https://upload.wikimedia.org/wikipedia/commons/thumb/0/09/Chow_Yun-fat_2012.jpg/440px-Chow_Yun-fat_2012.jpg",works:["英雄本色","赌神","卧虎藏龙"],currentWorks:[],hotness:80,updatedAt:"2025-01",sentiment:{score:96,positive:95,neutral:4,negative:1,keywords:["节俭","捐款","传奇影星"],recentEvents:["宣布将捐出大部分财产","获终身成就奖"]}},
-  {id:10,name:"张钧甯",  gender:"female",age:40,region:"hmt",     photo:"https://upload.wikimedia.org/wikipedia/commons/thumb/6/6e/Alyssa_Chia_2016.jpg/440px-Alyssa_Chia_2016.jpg",works:["犀利人妻","花漾","镇魂街"],currentWorks:["夜行者"],hotness:75,updatedAt:"2025-01",sentiment:{score:80,positive:83,neutral:13,negative:4,keywords:["亲和力","实力派","专业"],recentEvents:["主演新剧口碑出色","登杂志封面"]}},
-];
+const SEED = [];
 
 // ── 工具 ──────────────────────────────────────────────────────────────────────
 const HC = v => v>=90?"#ff4d6d":v>=75?"#ff9500":"#34c759";
@@ -514,11 +503,12 @@ function SettingsModal({onClose}) {
 // ══════════════════════════════════════════════════════════════════════════════
 //  📦 数据导出 / 导入 Modal
 // ══════════════════════════════════════════════════════════════════════════════
-function DataModal({actors, onClose, onImport}) {
-  const [tab,setTab]         = useState("export");
+function DataModal({actors, onClose, onImport, onReplace}) {
+  const [tab,setTab]           = useState("export");
   const [jsonText,setJsonText] = useState("");
   const [parseErr,setParseErr] = useState("");
   const [importOk,setImportOk] = useState("");
+  const [importMode,setImportMode] = useState("merge"); // "merge" | "replace"
 
   const doExport = () => {
     const data = {version:1, exportedAt:new Date().toISOString(), count:actors.length, actors};
@@ -542,13 +532,20 @@ function DataModal({actors, onClose, onImport}) {
       const incoming = Array.isArray(data) ? data : data.actors;
       if(!Array.isArray(incoming)||!incoming.length) throw new Error("未找到有效的演员数据");
       incoming.forEach((a,i)=>{ if(!a.name) throw new Error(`第 ${i+1} 条数据缺少姓名`); });
-      // 转简体后去重
-      const simpIncoming = incoming.map(a=>({...a, name:toSimplified(a.name)}));
-      const existSimp = new Set(actors.map(a=>toSimplified(a.name)));
-      const newOnes = simpIncoming.filter(a=>!existSimp.has(a.name)).map((a,i)=>({...a,id:Date.now()+i}));
-      const dupCount = incoming.length - newOnes.length;
-      onImport(newOnes);
-      setImportOk(`✅ 成功导入 ${newOnes.length} 位演员${dupCount?`，跳过 ${dupCount} 位重名`:""}`);
+      const simpIncoming = incoming.map((a,i)=>({...a, name:toSimplified(a.name), tags: Array.isArray(a.tags)?a.tags:[], id: a.id||Date.now()+i}));
+
+      if(importMode === "replace") {
+        // 全量覆盖：直接替换整个库
+        onReplace(simpIncoming);
+        setImportOk(`✅ 已覆盖导入 ${simpIncoming.length} 位演员（原有数据已清空）`);
+      } else {
+        // 合并追加：同名跳过
+        const existSimp = new Set(actors.map(a=>toSimplified(a.name)));
+        const newOnes   = simpIncoming.filter(a=>!existSimp.has(a.name));
+        const dupCount  = incoming.length - newOnes.length;
+        onImport(newOnes);
+        setImportOk(`✅ 成功导入 ${newOnes.length} 位演员${dupCount?`，跳过 ${dupCount} 位重名`:""}`);
+      }
       setJsonText("");
     } catch(e) { setParseErr("❌ 解析失败："+e.message); }
   };
@@ -587,10 +584,23 @@ function DataModal({actors, onClose, onImport}) {
 
         {tab==="import"&&(
           <div>
+            {/* 导入模式选择 */}
+            <div style={{display:"flex",gap:6,marginBottom:12,background:"#111827",padding:4,borderRadius:12}}>
+              <button onClick={()=>setImportMode("merge")}
+                style={{flex:1,padding:"7px 0",borderRadius:9,border:"none",cursor:"pointer",fontSize:11,fontWeight:600,
+                  background:importMode==="merge"?"#0d2e1e":"transparent",color:importMode==="merge"?"#34d399":"#6b7280"}}>
+                ➕ 合并追加<div style={{fontSize:9,fontWeight:400,marginTop:1,color:importMode==="merge"?"#6ee7b7":"#4b5563"}}>已有演员跳过，只加新增</div>
+              </button>
+              <button onClick={()=>setImportMode("replace")}
+                style={{flex:1,padding:"7px 0",borderRadius:9,border:"none",cursor:"pointer",fontSize:11,fontWeight:600,
+                  background:importMode==="replace"?"#2a1215":"transparent",color:importMode==="replace"?"#ff4d6d":"#6b7280"}}>
+                🔄 全量覆盖<div style={{fontSize:9,fontWeight:400,marginTop:1,color:importMode==="replace"?"#fca5a5":"#4b5563"}}>清空现有数据，完整替换</div>
+              </button>
+            </div>
+            {importMode==="replace"&&<div style={{marginBottom:10,padding:"8px 12px",background:"#2a1215",border:"1px solid #ff4d6d30",borderRadius:7,fontSize:11,color:"#fca5a5"}}>
+              ⚠️ 覆盖模式将清空当前所有演员数据，请确认已导出备份
+            </div>}
             <div style={{background:"#111827",borderRadius:10,padding:16,marginBottom:14}}>
-              <div style={{fontSize:12,color:"#6b7280",lineHeight:1.8,marginBottom:12}}>
-                支持导入之前导出的 JSON 文件，重名演员（含繁简体同名）自动跳过
-              </div>
               <label style={{display:"block",padding:"20px",border:"2px dashed #1e2535",borderRadius:9,textAlign:"center",cursor:"pointer"}}
                 onDragOver={e=>e.preventDefault()}
                 onDrop={e=>{e.preventDefault();const f=e.dataTransfer.files[0];if(f){const r=new FileReader();r.onload=ev=>{setJsonText(ev.target.result);setParseErr("");setImportOk("");};r.readAsText(f);}}}>
@@ -604,8 +614,11 @@ function DataModal({actors, onClose, onImport}) {
             {importOk&&<div style={{marginBottom:12,padding:"8px 12px",background:"#0d2010",border:"1px solid #34d39940",borderRadius:7,color:"#34d399",fontSize:12}}>{importOk}</div>}
             <div style={{display:"flex",gap:8}}>
               <button onClick={onClose} style={{...S.btnSecondary,flex:1}}>关闭</button>
-              <button onClick={doImport} disabled={!jsonText} style={{...S.btnPrimary,flex:2,background:"linear-gradient(135deg,#059669,#34d399)",opacity:jsonText?1:.4}}>
-                📥 确认导入
+              <button onClick={doImport} disabled={!jsonText}
+                style={{...S.btnPrimary,flex:2,
+                  background:jsonText?(importMode==="replace"?"linear-gradient(135deg,#dc2626,#ff4d6d)":"linear-gradient(135deg,#059669,#34d399)"):"#1e2535",
+                  opacity:jsonText?1:.4}}>
+                {importMode==="replace"?"🔄 覆盖导入":"📥 合并导入"}
               </button>
             </div>
           </div>
@@ -1788,7 +1801,7 @@ function App() {
       {showImport     &&<BatchImportModal existingNames={actors.map(a=>a.name)} onClose={()=>setShowImport(false)} onImport={importActors}/>}
       {showCastImport &&<CastImportModal existingNames={actors.map(a=>a.name)} onClose={()=>setShowCastImport(false)} onImport={importActors}/>}
       {showSettings   &&<SettingsModal onClose={()=>setShowSettings(false)}/>}
-      {showData       &&<DataModal actors={actors} onClose={()=>setShowData(false)} onImport={newActors=>setActors(p=>[...p,...newActors])}/>}
+      {showData       &&<DataModal actors={actors} onClose={()=>setShowData(false)} onImport={newActors=>setActors(p=>[...p,...newActors])} onReplace={newActors=>setActors(newActors)}/>}
     </div>
   );
 }
