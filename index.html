@@ -73,6 +73,15 @@ const _T2S={"後":"后","個":"个","這":"这","國":"国","來":"来","時":"�
 "曉":"晓","純":"纯","瀾":"澜","燁":"烨","錦":"锦","瑋":"玮","鈞":"钧","瑩":"莹","驍":"骁","鴻":"鸿","軒":"轩","暉":"晖","頡":"颉","瑤":"瑶","鋒":"锋","濤":"涛","澤":"泽","崢":"峥","騰":"腾","馳":"驰","盪":"荡","飄":"飘","嘉":"嘉","繁":"繁","繪":"绘","務":"务","覺":"觉","圍":"围","類":"类","幹":"干","響":"响","讀":"读"};
 function toSimplified(s){if(!s)return s;return s.split("").map(c=>_T2S[c]||c).join("");}
 
+// 判断演员是否有真实可用的形象照片
+function hasValidPhoto(photo) {
+  if (!photo) return false;
+  if (photo.trim() === "") return false;
+  if (photo.includes("pravatar.cc")) return false;
+  if (!photo.startsWith("http")) return false;
+  return true;
+}
+
 // ── 统一 AI API 调用层 ────────────────────────────────────────────────────────────────
 async function fetchAIJson(prompt, useSearch = false) {
   const provider = db.get("actor-provider") || "claude";
@@ -1202,7 +1211,7 @@ const PhotoPanel=({actor,onPhotoUpdate})=>{
       </div>
       <div style={{display:"flex",gap:11,alignItems:"flex-start"}}>
         <div style={{flexShrink:0,position:"relative"}}>
-          {!curErr&&actor.photo?<img src={actor.photo} style={{width:56,height:76,objectFit:"cover",borderRadius:6,border:"2px solid #1e2535",display:"block"}} referrerPolicy="no-referrer" onError={()=>setCurErr(true)}/>
+          {!curErr&&hasValidPhoto(actor.photo)?<img src={actor.photo} style={{width:56,height:76,objectFit:"cover",borderRadius:6,border:"2px solid #1e2535",display:"block"}} referrerPolicy="no-referrer" onError={()=>setCurErr(true)}/>
             :<div style={{width:56,height:76,borderRadius:6,background:"#1a2233",display:"flex",alignItems:"center",justifyContent:"center",fontSize:22,border:"2px solid #1e2535"}}>{actor.gender==="female"?"👩":"👨"}</div>}
           <div style={{position:"absolute",bottom:-2,left:"50%",transform:"translateX(-50%)",background:"rgba(0,0,0,.8)",borderRadius:3,padding:"1px 4px",fontSize:9,color:"#6b7280",whiteSpace:"nowrap"}}>当前</div>
         </div>
@@ -1249,7 +1258,7 @@ const PhotoPanel=({actor,onPhotoUpdate})=>{
 // ══════════════════════════════════════════════════════════════════════════════
 const BatchPhotoModal=({actors,onClose,onUpdate})=>{
   // 只把没有照片的演员加入队列（photo 为空或为默认占位）
-  const noPhotoActors = actors.filter(a => !a.photo || a.photo.includes("pravatar.cc"));
+  const noPhotoActors = actors.filter(a => !hasValidPhoto(a.photo));
   const skippedCount  = actors.length - noPhotoActors.length;
   const [queue,setQueue]=useState(noPhotoActors.map(a=>({id:a.id,name:a.name,gender:a.gender,cur:a.photo,newPhoto:null,source:"",status:"pending"})));
   const [running,setRunning]=useState(false);
@@ -1405,7 +1414,7 @@ const ActorCard=({actor,onClick})=>{
   return(
     <div className="actor-card" onClick={()=>onClick(actor)} style={S.card}>
       <div style={S.cardImgWrap}>
-        {!err&&actor.photo?<img src={actor.photo} alt={actor.name} style={S.cardImg} referrerPolicy="no-referrer" onError={()=>setErr(true)}/>:<div style={{...S.cardImg,display:"flex",alignItems:"center",justifyContent:"center",background:"#1e2535",fontSize:36}}>{actor.gender==="female"?"👩":"👨"}</div>}
+        {!err&&hasValidPhoto(actor.photo)?<img src={actor.photo} alt={actor.name} style={S.cardImg} referrerPolicy="no-referrer" onError={()=>setErr(true)}/>:<div style={{...S.cardImg,display:"flex",alignItems:"center",justifyContent:"center",background:"#1e2535",fontSize:36}}>{actor.gender==="female"?"👩":"👨"}</div>}
         <div style={{...S.hotnessTag,background:HC(actor.hotness)}}>🔥 {actor.hotness}</div>
         {actor.region==="hmt"&&<div style={S.hmtTag}>港澳台</div>}
       </div>
