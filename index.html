@@ -144,13 +144,10 @@ async function fetchPhotoWiki(name) {
   ];
   for (const { lang, label } of wikis) {
     try {
-      // 第一步：搜索词条
       const searchUrl = `https://${lang}.wikipedia.org/w/api.php?action=query&list=search&srsearch=${encodeURIComponent(name)}&srlimit=1&format=json&origin=*`;
       const sr = await fetch(searchUrl).then(r => r.json());
       const title = sr?.query?.search?.[0]?.title;
       if (!title) continue;
-
-      // 第二步：获取该词条的首张图片
       const imgUrl = `https://${lang}.wikipedia.org/w/api.php?action=query&titles=${encodeURIComponent(title)}&prop=pageimages&pithumbsize=500&format=json&origin=*`;
       const ir = await fetch(imgUrl).then(r => r.json());
       const pages = ir?.query?.pages || {};
@@ -159,7 +156,49 @@ async function fetchPhotoWiki(name) {
       if (thumb) return { photoUrl: thumb, source: label };
     } catch { /* 继续尝试下一个 */ }
   }
-  return null; // 两个维基均无结果
+  return null;
+}
+
+// 百度百科图片抓取
+// 使用百度百科公开摘要 API，取封面图并验证可访问性
+async function fetchPhotoBaidu(name) {
+  try {
+    const url = `https://baike.baidu.com/api/openapi/BaikeLemmaCardApi?scope=103&format=json&appid=379020&bk_key=${encodeURIComponent(name)}&bk_length=600`;
+    const data = await fetch(url, {referrerPolicy:"no-referrer"}).then(r => r.json());
+
+    // 候选图：imageInfo.url > images数组 > image字段
+    const candidates = [];
+    if (data?.imageInfo?.url) candidates.push(data.imageInfo.url);
+    const imgs = data?.images || data?.image || [];
+    (Array.isArray(imgs) ? imgs : [imgs]).forEach(img => {
+      const u = typeof img === "string" ? img : (img?.src || img?.url || "");
+      if (u && u.startsWith("http")) candidates.push(u);
+    });
+
+    for (const photoUrl of [...new Set(candidates)].slice(0, 4)) {
+      // 只接受图片直链（带图片扩展名或百度图床域名）
+      if (!/\.(jpg|jpeg|png|webp)/i.test(photoUrl) && !photoUrl.includes("bkimg") && !photoUrl.includes("bcebos")) continue;
+      try {
+        await new Promise((res, rej) => {
+          const img = new Image();
+          img.referrerPolicy = "no-referrer";
+          img.onload = res; img.onerror = rej;
+          img.src = photoUrl; setTimeout(rej, 5000);
+        });
+        return { photoUrl, source: "百度百科" };
+      } catch {}
+    }
+  } catch {}
+  return null;
+}
+
+// 免费渠道统一入口：Wiki（中/英）→ 百度百科
+async function fetchPhotoFree(name) {
+  const wiki = await fetchPhotoWiki(name);
+  if (wiki) return wiki;
+  const baidu = await fetchPhotoBaidu(name);
+  if (baidu) return baidu;
+  return null;
 }
 
 async function fetchPhoto(name) {
@@ -674,7 +713,7 @@ function BatchImportModal({existingNames, onClose, onImport}) {
                 <div key={i} style={{display:"flex",alignItems:"center",gap:10,padding:"10px 12px",borderBottom:i<queue.length-1?"1px solid #1e2535":"none",background:i===curIdx?"#0d1b2a":"transparent",animation:item.status==="done"?"fadeIn .3s ease":"none"}}>
                   <div style={{width:32,height:44,borderRadius:5,overflow:"hidden",border:"1px solid #1e2535",flexShrink:0,background:"#1a2233",display:"flex",alignItems:"center",justifyContent:"center",fontSize:14}}>
                     {item.actor?.photo
-                      ?<img src={item.actor.photo} style={{width:"100%",height:"100%",objectFit:"cover"}} onError={e=>e.target.style.display="none"}/>
+                      ?<img src={item.actor.photo} style={{width:"100%",height:"100%",objectFit:"cover"}} referrerPolicy="no-referrer" onError={e=>e.target.style.display="none"}/>
                       :(item.actor?.gender==="female"?"👩":"👨")
                     }
                   </div>
@@ -901,7 +940,7 @@ function CastImportModal({existingNames, onClose, onImport}) {
                 <div key={i} style={{display:"flex",alignItems:"center",gap:10,padding:"10px 12px",borderBottom:i<queue.length-1?"1px solid #1e2535":"none",background:i===curIdx?"#0d1b2a":"transparent"}}>
                   <div style={{width:32,height:44,borderRadius:5,overflow:"hidden",border:"1px solid #1e2535",flexShrink:0,background:"#1a2233",display:"flex",alignItems:"center",justifyContent:"center",fontSize:14}}>
                     {item.actor?.photo
-                      ?<img src={item.actor.photo} style={{width:"100%",height:"100%",objectFit:"cover",objectPosition:"top"}} onError={e=>e.target.style.display="none"}/>
+                      ?<img src={item.actor.photo} style={{width:"100%",height:"100%",objectFit:"cover",objectPosition:"top"}} referrerPolicy="no-referrer" onError={e=>e.target.style.display="none"}/>
                       :(item.actor?.gender==="female"?"👩":"👨")
                     }
                   </div>
@@ -1013,7 +1052,7 @@ function EditPanel({actor, onSave, onCancel, onDelete}) {
         </div>
         <div style={{display:"flex",gap:8,alignItems:"flex-start"}}>
           <div style={{flexShrink:0,width:44,height:60,borderRadius:6,overflow:"hidden",border:"1px solid #1e2535",background:"#1a2233"}}>
-            {form.photo?<img src={form.photo} style={{width:"100%",height:"100%",objectFit:"cover"}} onError={e=>e.target.style.display="none"}/>:null}
+            {form.photo?<img src={form.photo} style={{width:"100%",height:"100%",objectFit:"cover"}} referrerPolicy="no-referrer" onError={e=>e.target.style.display="none"}/>:null}
           </div>
           <div style={{flex:1}}>
             <input value={form.photo} onChange={e=>set("photo",e.target.value)} placeholder="https://..." style={S.input}/>
@@ -1119,12 +1158,30 @@ const PhotoPanel=({actor,onPhotoUpdate})=>{
     }catch(e){setStatus("error");setErrMsg(e.message);}
   };
 
+  const baiduFetch=async()=>{
+    setStatus("baidu-loading");setErrMsg("");setResult(null);setCurErr(false);
+    try{
+      const r=await fetchPhotoBaidu(actor.name);
+      if(!r) throw new Error("百度百科无此演员图片或图片无法加载");
+      setResult(r);setStatus("preview");
+    }catch(e){setStatus("error");setErrMsg(e.message);}
+  };
+
+  const freeFetch=async()=>{
+    setStatus("wiki-loading");setErrMsg("");setResult(null);setCurErr(false);
+    try{
+      const r=await fetchPhotoFree(actor.name);
+      if(!r) throw new Error("Wiki 和百度百科均无结果");
+      setResult(r);setStatus("preview");
+    }catch(e){setStatus("error");setErrMsg(e.message);}
+  };
+
   const confirm=url=>{onPhotoUpdate(actor.id,url);setStatus("success");setResult(null);setTimeout(()=>setStatus("idle"),2500);};
   const applyManual=()=>{
     if(!manual.startsWith("http")){setErrMsg("请输入有效 URL");return;}
     setResult({photoUrl:manual,source:"手动输入"});setStatus("preview");setErrMsg("");
   };
-  const isLoading = status==="loading"||status==="wiki-loading";
+  const isLoading = status==="loading"||status==="wiki-loading"||status==="baidu-loading";
 
   return(
     <div style={{background:"#0d1521",borderRadius:10,padding:12,border:"1px solid #1e2535",marginBottom:12}}>
@@ -1135,6 +1192,9 @@ const PhotoPanel=({actor,onPhotoUpdate})=>{
           <button onClick={wikiFetch} disabled={isLoading} style={{...S.btnTiny,color:"#34d399",borderColor:"#34d39940",opacity:isLoading?.6:1}}>
             {status==="wiki-loading"?"⏳...":"📖 Wiki"}
           </button>
+          <button onClick={baiduFetch} disabled={isLoading} style={{...S.btnTiny,color:"#f59e0b",borderColor:"#f59e0b40",opacity:isLoading?.6:1}}>
+            {status==="baidu-loading"?"⏳...":"🔴 百度"}
+          </button>
           <button onClick={autoFetch} disabled={isLoading} style={{...S.btnTinyPrimary,opacity:isLoading?.6:1}}>
             {status==="loading"?"⏳...":"🌐 AI匹配"}
           </button>
@@ -1142,18 +1202,19 @@ const PhotoPanel=({actor,onPhotoUpdate})=>{
       </div>
       <div style={{display:"flex",gap:11,alignItems:"flex-start"}}>
         <div style={{flexShrink:0,position:"relative"}}>
-          {!curErr&&actor.photo?<img src={actor.photo} style={{width:56,height:76,objectFit:"cover",borderRadius:6,border:"2px solid #1e2535",display:"block"}} onError={()=>setCurErr(true)}/>
+          {!curErr&&actor.photo?<img src={actor.photo} style={{width:56,height:76,objectFit:"cover",borderRadius:6,border:"2px solid #1e2535",display:"block"}} referrerPolicy="no-referrer" onError={()=>setCurErr(true)}/>
             :<div style={{width:56,height:76,borderRadius:6,background:"#1a2233",display:"flex",alignItems:"center",justifyContent:"center",fontSize:22,border:"2px solid #1e2535"}}>{actor.gender==="female"?"👩":"👨"}</div>}
           <div style={{position:"absolute",bottom:-2,left:"50%",transform:"translateX(-50%)",background:"rgba(0,0,0,.8)",borderRadius:3,padding:"1px 4px",fontSize:9,color:"#6b7280",whiteSpace:"nowrap"}}>当前</div>
         </div>
         <div style={{flex:1,minWidth:0}}>
           {status==="idle"&&!showManual&&<div style={{color:"#4b5563",fontSize:11,paddingTop:3,lineHeight:1.7}}>
-            <span style={{color:"#34d399"}}>📖 Wiki</span> 免费查询维基百科图片<br/>
+            <span style={{color:"#34d399"}}>📖 Wiki</span> 维基百科（异地同步稳定）<br/>
+            <span style={{color:"#f59e0b"}}>🔴 百度</span> 百度百科（华语演员覆盖更广）<br/>
             <span style={{color:"#60a5fa"}}>🌐 AI匹配</span> 用 {aiName} 联网搜索
           </div>}
           {isLoading&&<div style={{paddingTop:3}}>
-            <div style={{color:status==="wiki-loading"?"#34d399":"#60a5fa",fontSize:11,marginBottom:7,animation:"pulse 1.2s infinite"}}>
-              ● {status==="wiki-loading"?"查询维基百科...":aiName+" 正在搜索..."}
+            <div style={{color:status==="baidu-loading"?"#f59e0b":status==="wiki-loading"?"#34d399":"#60a5fa",fontSize:11,marginBottom:7,animation:"pulse 1.2s infinite"}}>
+              ● {status==="wiki-loading"?"查询维基百科...":status==="baidu-loading"?"查询百度百科...":aiName+" 正在搜索..."}
             </div>
             <div style={{background:"#1e2535",height:3,borderRadius:4,overflow:"hidden"}}>
               <div style={{height:"100%",width:"70%",background:status==="wiki-loading"?"linear-gradient(90deg,#34d399,#059669)":"linear-gradient(90deg,#3b82f6,#7c3aed)",borderRadius:4,animation:"scan 1.5s ease-in-out infinite"}}/>
@@ -1161,7 +1222,7 @@ const PhotoPanel=({actor,onPhotoUpdate})=>{
           </div>}
           {status==="preview"&&result&&<div>
             <div style={{fontSize:10,color:"#4b5563",marginBottom:5}}>🔍 {result.source}</div>
-            <img src={result.photoUrl} style={{width:"100%",maxHeight:90,objectFit:"cover",borderRadius:6,border:"2px solid #3b82f6",marginBottom:6,display:"block"}} onError={()=>{setStatus("error");setErrMsg("图片无法加载");setResult(null);}}/>
+            <img src={result.photoUrl} style={{width:"100%",maxHeight:90,objectFit:"cover",borderRadius:6,border:"2px solid #3b82f6",marginBottom:6,display:"block"}} referrerPolicy="no-referrer" onError={()=>{setStatus("error");setErrMsg("图片无法加载");setResult(null);}}/>
             <div style={{display:"flex",gap:5}}>
               <button onClick={()=>confirm(result.photoUrl)} style={{...S.btnTinyPrimary,flex:1}}>✅ 应用</button>
               <button onClick={()=>{setStatus("idle");setResult(null);}} style={{...S.btnTiny,flex:1}}>✕</button>
@@ -1194,7 +1255,7 @@ const BatchPhotoModal=({actors,onClose,onUpdate})=>{
   const [running,setRunning]=useState(false);
   const [curIdx,setCurIdx]=useState(-1);
   const [done,setDone]=useState(false);
-  const [mode,setMode]=useState("wiki"); // "wiki" | "ai"
+  const [mode,setMode]=useState("free"); // "free"(wiki+baidu) | "ai"
   const aiName = db.get("actor-provider")?.toUpperCase() || 'AI';
 
   const runAll=async()=>{
@@ -1203,17 +1264,17 @@ const BatchPhotoModal=({actors,onClose,onUpdate})=>{
       setCurIdx(i);setQueue(q=>q.map((a,idx)=>idx===i?{...a,status:"loading"}:a));
       try{
         let r;
-        if(mode==="wiki"){
-          r = await fetchPhotoWiki(queue[i].name);
-          if(!r) throw new Error("维基无结果");
+        if(mode==="free"){
+          r = await fetchPhotoFree(queue[i].name);
+          if(!r) throw new Error("无结果");
         } else {
           r = await fetchPhoto(queue[i].name);
-          await new Promise((res,rej)=>{const img=new Image();img.onload=res;img.onerror=rej;img.src=r.photoUrl;setTimeout(rej,6000);});
+          await new Promise((res,rej)=>{const img=new Image();img.referrerPolicy="no-referrer";img.onload=res;img.onerror=rej;img.src=r.photoUrl;setTimeout(rej,6000);});
         }
         setQueue(q=>q.map((a,idx)=>idx===i?{...a,newPhoto:r.photoUrl,source:r.source,status:"done"}:a));
       }
       catch{setQueue(q=>q.map((a,idx)=>idx===i?{...a,status:"error"}:a));}
-      await new Promise(r=>setTimeout(r,mode==="wiki"?600:1200));
+      await new Promise(r=>setTimeout(r,mode==="free"?800:1200));
     }
     setCurIdx(-1);setRunning(false);setDone(true);
   };
@@ -1239,8 +1300,8 @@ const BatchPhotoModal=({actors,onClose,onUpdate})=>{
 
         {/* 模式切换 */}
         {!running&&!done&&queue.length>0&&<div style={{display:"flex",gap:8,marginBottom:13}}>
-          <button onClick={()=>setMode("wiki")} style={{...S.filterBtn,flex:1,padding:"8px 0",fontSize:12,...(mode==="wiki"?{background:"#0d2e1e",border:"1px solid #34d399",color:"#34d399"}:{})}}>
-            📖 Wiki 查图<div style={{fontSize:10,color:mode==="wiki"?"#6ee7b7":"#4b5563",marginTop:2}}>免费·无需Key·约{queue.length*1}秒</div>
+          <button onClick={()=>setMode("free")} style={{...S.filterBtn,flex:1,padding:"8px 0",fontSize:12,...(mode==="free"?{background:"#0d2e1e",border:"1px solid #34d399",color:"#34d399"}:{})}}>
+            📖 Wiki + 🔴 百度<div style={{fontSize:10,color:mode==="free"?"#6ee7b7":"#4b5563",marginTop:2}}>免费·无需Key·约{queue.length*1.5}秒</div>
           </button>
           <button onClick={()=>setMode("ai")} style={{...S.filterBtn,flex:1,padding:"8px 0",fontSize:12,...(mode==="ai"?{background:"#0d1b3e",border:"1px solid #3b82f6",color:"#93c5fd"}:{})}}>
             🌐 {aiName} 匹配<div style={{fontSize:10,color:mode==="ai"?"#93c5fd":"#4b5563",marginTop:2}}>联网搜索·需Key·约{queue.length*4}秒</div>
@@ -1248,7 +1309,7 @@ const BatchPhotoModal=({actors,onClose,onUpdate})=>{
         </div>}
 
         {running&&<div style={{background:"#111827",borderRadius:8,padding:"7px 12px",marginBottom:10,fontSize:11,color:"#6b7280"}}>
-          使用 <span style={{color:mode==="wiki"?"#34d399":"#60a5fa"}}>{mode==="wiki"?"维基百科":aiName}</span> 查询中，共 {queue.length} 位...
+          使用 <span style={{color:mode==="free"?"#34d399":"#60a5fa"}}>{mode==="free"?"Wiki + 百度百科":aiName}</span> 查询中，共 {queue.length} 位...
         </div>}
 
         {(running||done)&&<div style={{display:"flex",gap:14,marginBottom:8,padding:"7px 12px",background:"#0d1521",borderRadius:8,fontSize:12}}>
@@ -1258,15 +1319,15 @@ const BatchPhotoModal=({actors,onClose,onUpdate})=>{
           {running&&curIdx>=0&&<span style={{color:"#60a5fa",marginLeft:"auto"}}>→ {queue[curIdx]?.name}</span>}
         </div>}
         {running&&<div style={{background:"#1e2535",height:3,borderRadius:4,overflow:"hidden",marginBottom:10}}>
-          <div style={{height:"100%",width:`${((doneCount+errCount)/queue.length)*100}%`,background:mode==="wiki"?"linear-gradient(90deg,#34d399,#059669)":"linear-gradient(90deg,#3b82f6,#7c3aed)",borderRadius:4,transition:"width .4s"}}/>
+          <div style={{height:"100%",width:`${((doneCount+errCount)/queue.length)*100}%`,background:mode==="free"?"linear-gradient(90deg,#34d399,#f59e0b)":"linear-gradient(90deg,#3b82f6,#7c3aed)",borderRadius:4,transition:"width .4s"}}/>
         </div>}
 
         <div style={{maxHeight:260,overflowY:"auto",marginBottom:13,border:"1px solid #1e2535",borderRadius:8}}>
           {queue.map((a,i)=>(
             <div key={a.id} style={{display:"flex",alignItems:"center",gap:10,padding:"8px 12px",borderBottom:i<queue.length-1?"1px solid #1e2535":"none",background:i===curIdx?"#0d1b2a":"transparent"}}>
               <div style={{display:"flex",gap:3,flexShrink:0}}>
-                <div style={{width:28,height:38,borderRadius:5,overflow:"hidden",border:"1px solid #1e2535"}}>{a.cur?<img src={a.cur} style={{width:"100%",height:"100%",objectFit:"cover"}} onError={e=>e.target.style.display="none"}/>:<div style={{width:"100%",height:"100%",background:"#1a2233",display:"flex",alignItems:"center",justifyContent:"center",fontSize:12}}>{a.gender==="female"?"👩":"👨"}</div>}</div>
-                {a.newPhoto&&<><span style={{display:"flex",alignItems:"center",color:"#3b82f6",fontSize:9}}>→</span><div style={{width:28,height:38,borderRadius:5,overflow:"hidden",border:"2px solid #3b82f6"}}><img src={a.newPhoto} style={{width:"100%",height:"100%",objectFit:"cover"}} onError={e=>e.target.style.display="none"}/></div></>}
+                <div style={{width:28,height:38,borderRadius:5,overflow:"hidden",border:"1px solid #1e2535"}}>{a.cur?<img src={a.cur} style={{width:"100%",height:"100%",objectFit:"cover"}} referrerPolicy="no-referrer" onError={e=>e.target.style.display="none"}/>:<div style={{width:"100%",height:"100%",background:"#1a2233",display:"flex",alignItems:"center",justifyContent:"center",fontSize:12}}>{a.gender==="female"?"👩":"👨"}</div>}</div>
+                {a.newPhoto&&<><span style={{display:"flex",alignItems:"center",color:"#3b82f6",fontSize:9}}>→</span><div style={{width:28,height:38,borderRadius:5,overflow:"hidden",border:"2px solid #3b82f6"}}><img src={a.newPhoto} style={{width:"100%",height:"100%",objectFit:"cover"}} referrerPolicy="no-referrer" onError={e=>e.target.style.display="none"}/></div></>}
               </div>
               <div style={{flex:1}}>
                 <div style={{fontSize:13,color:"#e2e8f0"}}>{a.name}</div>
@@ -1278,7 +1339,7 @@ const BatchPhotoModal=({actors,onClose,onUpdate})=>{
         </div>
         <div style={{display:"flex",gap:8,justifyContent:"flex-end"}}>
           <button onClick={onClose} disabled={running} style={S.btnSecondary}>关闭</button>
-          {!running&&!done&&queue.length>0&&<button onClick={runAll} style={{...S.btnPrimary,background:mode==="wiki"?"linear-gradient(135deg,#059669,#34d399)":undefined}}>🚀 开始{mode==="wiki"?"Wiki查图":"AI搜索"}</button>}
+          {!running&&!done&&queue.length>0&&<button onClick={runAll} style={{...S.btnPrimary,background:mode==="free"?"linear-gradient(135deg,#059669,#f59e0b)":undefined}}>🚀 开始{mode==="free"?"免费查图":"AI搜索"}</button>}
           {!running&&done&&<>
             <button onClick={()=>{setDone(false);setQueue(q=>q.map(a=>({...a,newPhoto:null,source:"",status:"pending"})));}} style={S.btnSecondary}>🔄 重新查</button>
             {doneCount>0&&<button onClick={applyAll} style={S.btnPrimary}>✅ 应用 {doneCount} 张</button>}
@@ -1325,7 +1386,7 @@ const AddActorModal=({onClose,onAdd})=>{
           <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:5}}><label style={S.label}>形象照片</label><button onClick={autoPhoto} disabled={photoLoading} style={{...S.btnTinyPrimary,opacity:photoLoading?.6:1}}>{photoLoading?"搜索中...":"🌐 自动匹配"}</button></div>
           <input value={form.photo} onChange={e=>set("photo",e.target.value)} placeholder="留空随机分配" style={S.input}/>
           {photoStatus&&<div style={{fontSize:11,color:photoStatus.includes("✅")?"#34c759":photoStatus.includes("❌")?"#ff4d6d":"#60a5fa",marginTop:3}}>{photoStatus}</div>}
-          {form.photo&&<img src={form.photo} style={{width:46,height:62,objectFit:"cover",borderRadius:5,marginTop:7,border:"2px solid #1e3a5f",display:"block"}} onError={e=>e.target.style.display="none"}/>}
+          {form.photo&&<img src={form.photo} style={{width:46,height:62,objectFit:"cover",borderRadius:5,marginTop:7,border:"2px solid #1e3a5f",display:"block"}} referrerPolicy="no-referrer" onError={e=>e.target.style.display="none"}/>}
         </div>
         <div style={S.field}><label style={S.label}>代表作（逗号分隔）</label><input value={form.works} onChange={e=>set("works",e.target.value)} style={S.input}/></div>
         <div style={S.field}><label style={S.label}>在播作品（逗号分隔）</label><input value={form.currentWorks} onChange={e=>set("currentWorks",e.target.value)} style={S.input}/></div>
@@ -1344,7 +1405,7 @@ const ActorCard=({actor,onClick})=>{
   return(
     <div className="actor-card" onClick={()=>onClick(actor)} style={S.card}>
       <div style={S.cardImgWrap}>
-        {!err&&actor.photo?<img src={actor.photo} alt={actor.name} style={S.cardImg} onError={()=>setErr(true)}/>:<div style={{...S.cardImg,display:"flex",alignItems:"center",justifyContent:"center",background:"#1e2535",fontSize:36}}>{actor.gender==="female"?"👩":"👨"}</div>}
+        {!err&&actor.photo?<img src={actor.photo} alt={actor.name} style={S.cardImg} referrerPolicy="no-referrer" onError={()=>setErr(true)}/>:<div style={{...S.cardImg,display:"flex",alignItems:"center",justifyContent:"center",background:"#1e2535",fontSize:36}}>{actor.gender==="female"?"👩":"👨"}</div>}
         <div style={{...S.hotnessTag,background:HC(actor.hotness)}}>🔥 {actor.hotness}</div>
         {actor.region==="hmt"&&<div style={S.hmtTag}>港澳台</div>}
       </div>
